@@ -53,6 +53,7 @@ from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     save_session_summary, pop_last_session,
     search_memory, set_trim_notifier,
+    save_session_log, get_saved_sessions,
 )
 
 # The file-backed tools (open_app, web_search, browser_control, …) are no longer
@@ -1864,12 +1865,16 @@ class JarvisLive:
         log = self._session_log
         if len(log) < 3:          # need at least one exchange to be worth saving
             return
-        self._session_log = []    # reset immediately so the next session starts clean
 
         memory = load_memory()
         lang_entry = memory.get("identity", {}).get("language", {})
         lang = (lang_entry.get("value", "") if isinstance(lang_entry, dict) else str(lang_entry)).strip()
         lang = lang or "English"
+
+        # Persist the full transcript before summarising
+        save_session_log(list(log), language=lang)
+
+        self._session_log = []    # reset immediately so the next session starts clean
 
         convo = "\n".join(log[-40:])   # cap at last 40 turns to stay within token budget
         prompt = (

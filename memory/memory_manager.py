@@ -551,9 +551,60 @@ def pop_last_session() -> dict | None:
             return None
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Phase 2 — Enhanced Memory System
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Session history (persisted transcripts) ─────────────────────────────────
+
+_SESSIONS_DIR = MEMORY_PATH.parent / "sessions"
+_session_seq = 0
+
+
+def save_session_log(turns: list[str], summary: str = "", language: str = "") -> None:
+    """Persist the full conversation transcript to memory/sessions/<timestamp>.json."""
+    if not turns:
+        return
+    global _session_seq
+    _session_seq += 1
+    now = datetime.now()
+    ts = now.strftime("%Y-%m-%d_%H-%M-%S") + f"_{_session_seq:04d}"
+    entry = {
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "summary": (summary or "")[:280],
+        "language": language,
+        "turn_count": len(turns),
+        "turns": list(turns),
+    }
+    _SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    path = _SESSIONS_DIR / f"{ts}.json"
+    try:
+        path.write_text(json.dumps(entry, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"[Memory] 💾 Session transcript saved: {path.name} ({len(turns)} turns)")
+    except Exception as e:
+        print(f"[Memory] ⚠️ save_session_log error: {e}")
+
+
+def get_saved_sessions(limit: int = 20) -> list[dict]:
+    """Return persisted session transcripts, newest first.
+
+    Each entry has: date, time, summary, language, turn_count, turns (list[str]).
+    """
+    if not _SESSIONS_DIR.exists():
+        return []
+    sessions = []
+    for path in sorted(_SESSIONS_DIR.glob("*.json"), reverse=True)[:limit]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["_file"] = path.name
+            sessions.append(data)
+        except Exception:
+            continue
+    return sessions
+
+
+def get_session_count() -> int:
+    """Return the number of persisted session transcripts."""
+    if not _SESSIONS_DIR.exists():
+        return 0
+    return sum(1 for _ in _SESSIONS_DIR.glob("*.json"))
 
 def get_memory_stats() -> dict:
     """Return statistics about the stored memory.

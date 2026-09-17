@@ -2346,6 +2346,209 @@ class MemoryOverlay(_HudOverlay):
         QTimer.singleShot(0, self._rebuild)
 
 
+class SessionHistoryOverlay(_HudOverlay):
+    """Browse past conversation transcripts saved on disk."""
+
+    _OW = 580
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            SessionHistoryOverlay {{
+                background: rgba(0, 6, 10, 246);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+        self.setFixedWidth(self._OW)
+        self._expanded_idx = -1
+
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(20, 16, 20, 16)
+        self._lay.setSpacing(5)
+        self._rebuild()
+
+    def _clear_layout(self):
+        while self._lay.count():
+            item = self._lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+                continue
+            sub = item.layout()
+            if sub is not None:
+                while sub.count():
+                    si = sub.takeAt(0)
+                    sw = si.widget()
+                    if sw is not None:
+                        sw.hide()
+                        sw.deleteLater()
+                sub.deleteLater()
+
+    def _settle(self, before):
+        self._lay.invalidate()
+        self._lay.activate()
+        self.updateGeometry()
+        self.adjustSize()
+        p = self.parentWidget()
+        if p is None:
+            self.update()
+            return
+        self.move(max(0, (p.width()  - self.width())  // 2),
+                  max(0, (p.height() - self.height()) // 2))
+        p.update(before.united(self.geometry()))
+        self.update()
+
+    def _rebuild(self):
+        before = self.geometry()
+        self._clear_layout()
+
+        from memory.memory_manager import get_saved_sessions
+
+        hdr = QLabel("📜  CONVERSATION HISTORY")
+        hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        self._lay.addWidget(hdr)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
+        self._lay.addWidget(sep)
+
+        sessions = get_saved_sessions(limit=30)
+
+        cap = QLabel(f"{len(sessions)} saved session(s) on disk. "
+                     f"Transcripts are stored in memory/sessions/.")
+        cap.setWordWrap(True)
+        cap.setFont(QFont("Courier New", 7))
+        cap.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        self._lay.addWidget(cap)
+
+        if not sessions:
+            empty = QLabel("No saved sessions yet. "
+                           "Transcripts are saved when a session ends.")
+            empty.setFont(QFont("Courier New", 9))
+            empty.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+            self._lay.addWidget(empty)
+        else:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFixedHeight(min(500, 60 * len(sessions) + 10))
+            scroll.setStyleSheet(
+                f"QScrollArea {{ border: 1px solid {C.BORDER}; border-radius: 3px; "
+                f"background: transparent; }}"
+            )
+            inner = QWidget()
+            ilay  = QVBoxLayout(inner)
+            ilay.setContentsMargins(6, 6, 6, 6)
+            ilay.setSpacing(4)
+
+            for i, s in enumerate(sessions):
+                row = QWidget()
+                row.setStyleSheet("background: transparent;")
+                rlay = QVBoxLayout(row)
+                rlay.setContentsMargins(0, 0, 0, 0)
+                rlay.setSpacing(2)
+
+                # Header line: date + time + turn count + expand button
+                hline = QHBoxLayout(); hline.setSpacing(6)
+                date_lbl = QLabel(f"{s.get('date', '?')}  {s.get('time', '')}")
+                date_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+                date_lbl.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
+                hline.addWidget(date_lbl)
+
+                tc = s.get("turn_count", len(s.get("turns", [])))
+                meta = QLabel(f"{tc} turns")
+                meta.setFont(QFont("Courier New", 7))
+                meta.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+                hline.addWidget(meta)
+
+                lang = s.get("language", "")
+                if lang:
+                    lang_lbl = QLabel(lang)
+                    lang_lbl.setFont(QFont("Courier New", 7))
+                    lang_lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+                    hline.addWidget(lang_lbl)
+
+                hline.addStretch()
+                expand_btn = QPushButton("▸")
+                expand_btn.setFixedSize(20, 20)
+                expand_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+                expand_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                expand_btn.setStyleSheet(f"""
+                    QPushButton {{ background: transparent; color: {C.TEXT_MED};
+                        border: 1px solid {C.BORDER}; border-radius: 3px; }}
+                    QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI_DIM}; }}
+                """)
+                expand_btn.clicked.connect(
+                    lambda _=False, idx=i: self._toggle_expand(idx))
+                hline.addWidget(expand_btn)
+                rlay.addLayout(hline)
+
+                # Summary line
+                summary = s.get("summary", "")
+                if summary:
+                    sum_lbl = QLabel(summary)
+                    sum_lbl.setWordWrap(True)
+                    sum_lbl.setFont(QFont("Courier New", 7))
+                    sum_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+                    rlay.addWidget(sum_lbl)
+
+                # Expandable turns section (hidden by default)
+                turns_widget = QWidget()
+                turns_widget.setVisible(False)
+                turns_widget.setObjectName(f"turns_{i}")
+                tlay = QVBoxLayout(turns_widget)
+                tlay.setContentsMargins(12, 4, 6, 4)
+                tlay.setSpacing(2)
+                turns = s.get("turns", [])
+                for turn in turns[-20:]:  # show last 20 turns
+                    t_lbl = QLabel(turn)
+                    t_lbl.setWordWrap(True)
+                    t_lbl.setFont(QFont("Courier New", 7))
+                    if turn.startswith("User:"):
+                        t_lbl.setStyleSheet(f"color: {C.WHITE}; background: transparent;")
+                    else:
+                        t_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
+                    tlay.addWidget(t_lbl)
+                if len(turns) > 20:
+                    more = QLabel(f"… and {len(turns) - 20} more turns")
+                    more.setFont(QFont("Courier New", 7))
+                    more.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+                    tlay.addWidget(more)
+                rlay.addWidget(turns_widget)
+
+                ilay.addWidget(row)
+
+            ilay.addStretch()
+            scroll.setWidget(inner)
+            self._lay.addWidget(scroll)
+
+        close = QPushButton("CLOSE")
+        close.setFixedHeight(30)
+        close.setFont(QFont("Courier New", 9))
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px; }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+        """)
+        close.clicked.connect(self.hide)
+        self._lay.addWidget(close)
+
+        self._settle(before)
+        QTimer.singleShot(0, lambda g=before: self._settle(g))
+
+    def _toggle_expand(self, idx: int):
+        if self._expanded_idx == idx:
+            self._expanded_idx = -1
+        else:
+            self._expanded_idx = idx
+        # Rebuild to apply expand/collapse state
+        QTimer.singleShot(0, self._rebuild)
+
+
 class ClipboardPanel(QWidget):
     """Floating panel shown when text is copied — offers quick Jarvis actions."""
 
@@ -3094,6 +3297,7 @@ class MainWindow(QMainWindow):
 
         # Tray manager (installed by main.py after JarvisLive is created)
         self.tray_manager = None
+        self._history_overlay = None
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
@@ -3992,6 +4196,14 @@ class MainWindow(QMainWindow):
         mem_btn.setStyleSheet(_BTN_STYLE_DIM)
         mem_btn.clicked.connect(self._open_memory_panel)
         lay.addWidget(mem_btn)
+
+        hist_btn = QPushButton("📜  HISTORY")
+        hist_btn.setFixedHeight(26)
+        hist_btn.setFont(QFont("Courier New", 7))
+        hist_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        hist_btn.setStyleSheet(_BTN_STYLE_DIM)
+        hist_btn.clicked.connect(self._open_history_panel)
+        lay.addWidget(hist_btn)
 
         plugin_btn = QPushButton("🧩  PLUGINS")
         plugin_btn.setFixedHeight(26)
@@ -5052,6 +5264,11 @@ class MainWindow(QMainWindow):
         ov = MemoryOverlay(parent=self.centralWidget())
         self._centre_overlay(ov)
         self._memory_overlay = ov
+
+    def _open_history_panel(self):
+        ov = SessionHistoryOverlay(parent=self.centralWidget())
+        self._centre_overlay(ov)
+        self._history_overlay = ov
 
     # ── Irreversible-action confirmation ─────────────────────────────────────
 
