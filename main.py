@@ -1222,6 +1222,7 @@ class JarvisLive:
                         except Exception:
                             pass
                     await asyncio.sleep(1.5)
+                    self.ui.stop_tray()
                     import os as _os
                     _os._exit(0)
                 asyncio.create_task(_do_shutdown())
@@ -2268,6 +2269,12 @@ class JarvisLive:
 
 def main():
     ui = JarvisUI("face.png")
+
+    # Install system tray icon (minimize-to-tray on close)
+    def _tray_quit():
+        import os as _os
+        _os._exit(0)
+    ui.start_tray(on_quit=_tray_quit)
 
     def runner():
         ui.wait_for_api_key()

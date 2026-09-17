@@ -5,9 +5,15 @@ Auto-discovered tool providing verbal memory commands:
   - Remember facts ("Remember that my project demo is on Friday")
   - Search / recall memories ("What do you remember about my project?")
   - Forget facts ("Forget that", "Forget my project demo")
+  - Memory statistics ("How much do you remember?")
+  - Export / import memories (backup and restore)
+  - Clear memories (by category or all)
+  - Memory age ("When did I tell you about my project?")
 """
 from memory.memory_manager import (
-    remember, forget, forget_matching, search_memory, is_sensitive_key_value
+    remember, forget, forget_matching, search_memory, is_sensitive_key_value,
+    get_memory_stats, export_memory, import_memory, clear_category,
+    clear_all_memory, get_memory_age,
 )
 
 
@@ -42,27 +48,75 @@ def memory_controller(
         else:
             return "Please specify what fact or query to forget."
 
+    elif action == "stats":
+        stats = get_memory_stats()
+        lines = [
+            f"Total entries: {stats['total']}",
+            f"Sessions stored: {stats['sessions']}",
+            f"File size: {stats['size_bytes']:,} bytes",
+        ]
+        if stats["oldest"]:
+            lines.append(f"Oldest entry: {stats['oldest']}")
+        if stats["newest"]:
+            lines.append(f"Newest entry: {stats['newest']}")
+        by_cat = stats.get("by_category", {})
+        if by_cat:
+            lines.append("By category:")
+            for cat, count in sorted(by_cat.items()):
+                if count > 0:
+                    lines.append(f"  {cat}: {count}")
+        return "\n".join(lines)
+
+    elif action == "export":
+        data = export_memory()
+        return f"Memory exported ({len(data)} bytes). Data:\n{data}"
+
+    elif action == "import":
+        import_data = str(params.get("data", "")).strip()
+        if not import_data:
+            return "Please provide import data (JSON string) in the 'data' parameter."
+        return import_memory(import_data, merge=True)
+
+    elif action == "clear":
+        target = str(params.get("target", "")).strip()
+        if target == "all":
+            return clear_all_memory(confirm_key=str(params.get("confirm_key", "")))
+        elif target:
+            return clear_category(target)
+        else:
+            return "Please specify a target: a category name or 'all'."
+
+    elif action == "age":
+        if not key:
+            return "Please provide a key to check the age of."
+        return get_memory_age(key, category)
+
     else:
         return (
             f"Unknown memory action: '{action}'. "
-            "Supported actions: remember | recall | forget"
+            "Supported actions: remember | recall | forget | stats | export | import | clear | age"
         )
 
 
 TOOL = {
     "name": "memory_controller",
     "description": (
-        "Manages short-term and long-term memory. "
-        "Use action='remember' to store a fact ('Remember that my project demo is on Friday'). "
-        "Use action='recall' to search stored facts ('What do you remember about my project?'). "
-        "Use action='forget' to delete a fact ('Forget that', 'Forget my project demo')."
+        "Manages short-term and long-term memory with full CRUD operations. "
+        "Use action='remember' to store a fact. "
+        "Use action='recall' to search stored facts. "
+        "Use action='forget' to delete a fact. "
+        "Use action='stats' to see memory statistics (total entries, categories, size). "
+        "Use action='export' to backup all memories as JSON. "
+        "Use action='import' to restore memories from a JSON backup. "
+        "Use action='clear' to delete entries by category or all. "
+        "Use action='age' to check when a fact was last updated."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "remember | recall | forget"
+                "description": "remember | recall | forget | stats | export | import | clear | age"
             },
             "key": {
                 "type": "STRING",
@@ -79,6 +133,18 @@ TOOL = {
             "query": {
                 "type": "STRING",
                 "description": "Keyword or topic to search or forget"
+            },
+            "data": {
+                "type": "STRING",
+                "description": "JSON string for import action"
+            },
+            "target": {
+                "type": "STRING",
+                "description": "Category name or 'all' for the clear action"
+            },
+            "confirm_key": {
+                "type": "STRING",
+                "description": "Must be 'YES_DELETE_ALL' to confirm clearing all memories"
             }
         },
         "required": ["action"]

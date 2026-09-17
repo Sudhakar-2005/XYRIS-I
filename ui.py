@@ -3092,6 +3092,9 @@ class MainWindow(QMainWindow):
         self._review_sig.connect(self._show_review)
         self._cam_stop = threading.Event()
 
+        # Tray manager (installed by main.py after JarvisLive is created)
+        self.tray_manager = None
+
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
 
@@ -3111,6 +3114,19 @@ class MainWindow(QMainWindow):
         sc_full.activated.connect(self._toggle_fullscreen)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
+
+    # --- Tray integration ----------------------------------------------------
+    def closeEvent(self, event):
+        """Intercept window close: hide to tray instead of quitting."""
+        if self.tray_manager is not None and self.tray_manager.is_installed():
+            event.ignore()
+            self.hide()
+            self.tray_manager.show_notification(
+                self.windowTitle(),
+                "JARVIS is running in the background. Double-click tray icon to restore.",
+            )
+        else:
+            event.accept()
 
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
@@ -5436,3 +5452,16 @@ class JarvisUI:
     def stop_speaking(self):
         if not self.muted:
             self.set_state("LISTENING")
+
+    # --- Tray ----------------------------------------------------------------
+    def start_tray(self, on_quit=None) -> None:
+        """Thread-safe: install the system tray icon.  `on_quit` is called on quit."""
+        from core.tray_manager import TrayManager
+        if self._win.tray_manager is None:
+            self._win.tray_manager = TrayManager(self._win, on_quit=on_quit)
+        self._win.tray_manager.install()
+
+    def stop_tray(self) -> None:
+        """Thread-safe: remove the system tray icon."""
+        if self._win.tray_manager is not None:
+            self._win.tray_manager.uninstall()

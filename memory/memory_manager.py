@@ -332,13 +332,15 @@ def _score(query_words: list[str], cat: str, key: str, value: str) -> int:
     cost one model round trip, never two."""
     hay_key = _pretty(key).lower()
     hay_val = value.lower()
+    # Also include the raw key (with underscores) for exact matches
+    hay_raw = key.lower()
     score   = 0
     for w in query_words:
         if not w:
             continue
-        if w == hay_key:
+        if w == hay_key or w == hay_raw:
             score += 10
-        elif w in hay_key:
+        elif w in hay_key or w in hay_raw:
             score += 6
         if w in hay_val:
             score += 3
@@ -546,4 +548,222 @@ def pop_last_session() -> dict | None:
             return entry
         except Exception as e:
             print(f"[Memory] ⚠️ pop_last_session error: {e}")
-            return None
+            return None
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 2 — Enhanced Memory System
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_memory_stats() -> dict:
+    """Return statistics about the stored memory.
+
+    Returns a dict with:
+      - total: total number of entries across all categories
+      - by_category: {category: count} for each category
+      - oldest: date string of the oldest entry
+      - newest: date string of the newest entry
+      - size_bytes: approximate file size on disk
+      - sessions: number of stored session summaries
+    """
+    memory = load_memory()
+    total = 0
+    by_cat = {}
+    dates = []
+
+    for cat, items in memory.items():
+        if cat == "sessions":
+            continue
+        if not isinstance(items, dict):
+            continue
+        count = 0
+        for key, entry in items.items():
+            val = _entry_value(entry)
+            if val:
+                count += 1
+                updated = ""
+                if isinstance(entry, dict):
+                    updated = entry.get("updated", "")
+                if updated:
+                    dates.append(updated)
+        by_cat[cat] = count
+        total += count
+
+    sessions = memory.get("sessions", [])
+    session_count = len(sessions) if isinstance(sessions, list) else 0
+
+    size = 0
+    if MEMORY_PATH.exists():
+        try:
+            size = MEMORY_PATH.stat().st_size
+        except Exception:
+            pass
+
+    return {
+        "total": total,
+        "by_category": by_cat,
+        "oldest": min(dates) if dates else "",
+        "newest": max(dates) if dates else "",
+        "size_bytes": size,
+        "sessions": session_count,
+    }
+
+
+def export_memory() -> str:
+    """Export all memories as a JSON string for backup or transfer.
+
+    Returns a JSON string containing all categories and entries.
+    Session summaries are excluded (they are transient).
+    """
+    memory = load_memory()
+    export = {}
+    for cat, items in memory.items():
+        if cat == "sessions":
+            continue
+        if isinstance(items, dict):
+            export[cat] = items
+    return json.dumps(export, indent=2, ensure_ascii=False)
+
+
+def import_memory(json_str: str, merge: bool = True) -> str:
+    """Import memories from a JSON string.
+
+    Args:
+        json_str: JSON string with category→key→entry structure.
+        merge: If True, merge with existing memory. If False, replace entirely.
+
+    Returns a status message.
+    """
+    if not json_str or not json_str.strip():
+        return "No data provided for import."
+
+    try:
+        data = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        return f"Invalid JSON: {e}"
+
+    if not isinstance(data, dict):
+        return "Import data must be a JSON object with category keys."
+
+    valid_cats = {"identity", "preferences", "projects", "relationships", "wishes", "notes"}
+    imported = 0
+    skipped = 0
+
+    if merge:
+        memory = load_memory()
+    else:
+        memory = _empty_memory()
+
+    for cat, items in data.items():
+        if cat not in valid_cats:
+            skipped += 1
+            continue
+        if not isinstance(items, dict):
+            skipped += 1
+            continue
+        if cat not in memory:
+            memory[cat] = {}
+        for key, entry in items.items():
+            if isinstance(entry, dict) and "value" in entry:
+                val = _truncate_value(str(entry["value"]))
+                if is_sensitive_key_value(key, val):
+                    skipped += 1
+                    continue
+                memory[cat][key] = {
+                    "value": val,
+                    "updated": entry.get("updated", datetime.now().strftime("%Y-%m-%d")),
+                }
+                imported += 1
+            elif isinstance(entry, str):
+                val = _truncate_value(entry)
+                if is_sensitive_key_value(key, val):
+                    skipped += 1
+                    continue
+                memory[cat][key] = {
+                    "value": val,
+                    "updated": datetime.now().strftime("%Y-%m-%d"),
+                }
+                imported += 1
+            else:
+                skipped += 1
+
+    save_memory(memory)
+    return f"Imported {imported} entries ({skipped} skipped due to invalid data or sensitive content)."
+
+
+def clear_category(category: str) -> str:
+    """Delete all entries in a specific category.
+
+    Returns a status message with the count of deleted entries.
+    """
+    valid = {"identity", "preferences", "projects", "relationships", "wishes", "notes"}
+    if category not in valid:
+        return f"Unknown category: '{category}'. Valid: {', '.join(sorted(valid))}"
+
+    memory = load_memory()
+    items = memory.get(category, {})
+    if not isinstance(items, dict) or not items:
+        return f"Category '{category}' is already empty."
+
+    count = len(items)
+    memory[category] = {}
+    save_memory(memory)
+    return f"Cleared {count} entries from '{category}'."
+
+
+def clear_all_memory(confirm_key: str = "") -> str:
+    """Delete ALL stored memories. Requires confirmation_key='YES_DELETE_ALL'.
+
+    This is a destructive operation. The confirmation key prevents accidental
+    bulk deletion.
+    """
+    if confirm_key != "YES_DELETE_ALL":
+        return (
+            "This will delete ALL stored memories. "
+            "Call again with confirm_key='YES_DELETE_ALL' to proceed."
+        )
+
+    memory = _empty_memory()
+    save_memory(memory)
+    return "All memories have been cleared."
+
+
+def get_memory_age(key: str, category: str = "notes") -> str:
+    """Return a human-readable age string for a memory entry.
+
+    Examples: "today", "2 days ago", "about 3 weeks ago", "unknown".
+    """
+    memory = load_memory()
+    cat = memory.get(category, {})
+    entry = cat.get(key)
+    if not entry or not isinstance(entry, dict):
+        return "not found"
+
+    updated = entry.get("updated", "")
+    if not updated:
+        return "unknown"
+
+    try:
+        entry_date = datetime.strptime(updated, "%Y-%m-%d")
+    except ValueError:
+        return "unknown"
+
+    now = datetime.now()
+    delta = now - entry_date
+    days = delta.days
+
+    if days == 0:
+        return "today"
+    elif days == 1:
+        return "yesterday"
+    elif days < 7:
+        return f"{days} days ago"
+    elif days < 30:
+        weeks = days // 7
+        return f"about {'one' if weeks == 1 else weeks} week{'s' if weeks != 1 else ''} ago"
+    elif days < 365:
+        months = days // 30
+        return f"about {'one' if months == 1 else months} month{'s' if months != 1 else ''} ago"
+    else:
+        years = days // 365
+        return f"about {'one' if years == 1 else years} year{'s' if years != 1 else ''} ago"
