@@ -3123,7 +3123,7 @@ class MainWindow(QMainWindow):
             self.hide()
             self.tray_manager.show_notification(
                 self.windowTitle(),
-                "JARVIS is running in the background. Double-click tray icon to restore.",
+                f"JARVIS is running in the background.\nPress {self.tray_manager.hotkey_label()} to restore.",
             )
         else:
             event.accept()

@@ -5,6 +5,7 @@ Provides:
 - System tray icon with context menu (Restore, Quit)
 - Minimize-to-tray on window close
 - Background operation while window is hidden
+- Global hotkey (Ctrl+Alt+J) to restore from anywhere
 - Graceful quit that saves session state
 """
 from __future__ import annotations
@@ -15,6 +16,8 @@ from typing import TYPE_CHECKING, Callable, Optional
 from PyQt6.QtCore import pyqtSignal, QObject
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
+
+from core.hotkey import GlobalHotkey
 
 if TYPE_CHECKING:
     from ui import MainWindow
@@ -42,9 +45,10 @@ class TrayManager(QObject):
         self._window = window
         self._on_quit = on_quit
         self._tray: Optional[QSystemTrayIcon] = None
+        self._hotkey: Optional[GlobalHotkey] = None
 
     def install(self) -> None:
-        """Create and show the tray icon."""
+        """Create and show the tray icon and global hotkey."""
         if self._tray is not None:
             return
 
@@ -61,7 +65,7 @@ class TrayManager(QObject):
             "QMenu::item:selected { background-color: #16213e; }"
         )
 
-        restore_action = QAction("Restore", menu)
+        restore_action = QAction("Restore  (Ctrl+Alt+J)", menu)
         restore_action.triggered.connect(self._restore)
         menu.addAction(restore_action)
 
@@ -73,11 +77,18 @@ class TrayManager(QObject):
 
         self._tray.setContextMenu(menu)
         self._tray.activated.connect(self._on_activated)
-        self._tray.setToolTip("JARVIS — Mark LIV")
+        self._tray.setToolTip("JARVIS — Mark LIV  (Ctrl+Alt+J to open)")
         self._tray.show()
 
+        # Start the global open hotkey
+        self._hotkey = GlobalHotkey(self._restore)
+        self._hotkey.start()
+
     def uninstall(self) -> None:
-        """Remove the tray icon."""
+        """Remove the tray icon and global hotkey."""
+        if self._hotkey is not None:
+            self._hotkey.stop()
+            self._hotkey = None
         if self._tray is not None:
             self._tray.hide()
             self._tray.deleteLater()
@@ -93,6 +104,12 @@ class TrayManager(QObject):
     def show_notification(self, title: str, message: str, duration_ms: int = 3000) -> None:
         if self._tray is not None:
             self._tray.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, duration_ms)
+
+    def hotkey_label(self) -> str:
+        """Return the human-readable hotkey label for display."""
+        if self._hotkey is not None:
+            return self._hotkey.chord_label
+        return "Ctrl+Alt+J"
 
     def _on_activated(self, reason: int) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:

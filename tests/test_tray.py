@@ -249,5 +249,119 @@ class TestShutdownTrayCleanup(unittest.TestCase):
         mock_ui.stop_tray.assert_called_once()
 
 
+class TestGlobalHotkey(unittest.TestCase):
+    """Test GlobalHotkey class interface and behavior."""
+
+    def test_import(self):
+        from core.hotkey import GlobalHotkey
+        self.assertTrue(callable(GlobalHotkey))
+
+    def test_has_start_stop(self):
+        from core.hotkey import GlobalHotkey
+        self.assertTrue(hasattr(GlobalHotkey, "start"))
+        self.assertTrue(hasattr(GlobalHotkey, "stop"))
+
+    def test_has_chord_label(self):
+        from core.hotkey import GlobalHotkey
+        cb = MagicMock()
+        hk = GlobalHotkey(cb)
+        self.assertIsInstance(hk.chord_label, str)
+        self.assertIn("+", hk.chord_label)
+
+    def test_default_chord(self):
+        from core.hotkey import GlobalHotkey, DEFAULT_OPEN_CHORD
+        self.assertEqual(DEFAULT_OPEN_CHORD, ("ctrl", "alt", "j"))
+
+    def test_stop_when_not_started(self):
+        from core.hotkey import GlobalHotkey
+        cb = MagicMock()
+        hk = GlobalHotkey(cb)
+        hk.stop()
+        self.assertFalse(hk._registered)
+
+    def test_custom_chord(self):
+        from core.hotkey import GlobalHotkey
+        cb = MagicMock()
+        hk = GlobalHotkey(cb, chord=("ctrl", "alt", "k"))
+        self.assertIn("K", hk.chord_label)
+
+    def test_start_returns_bool(self):
+        from core.hotkey import GlobalHotkey
+        cb = MagicMock()
+        hk = GlobalHotkey(cb)
+        result = hk.start()
+        self.assertIsInstance(result, bool)
+        hk.stop()
+
+
+class TestTrayManagerHotkeyIntegration(unittest.TestCase):
+    """Test that TrayManager manages the global hotkey."""
+
+    def test_tray_has_hotkey_attr(self):
+        mock_qobject = type("QObject", (), {"__init__": lambda self, *a, **kw: None})
+        mock_signal = MagicMock()
+        with patch.dict("sys.modules", {
+            "PyQt6.QtCore": MagicMock(pyqtSignal=mock_signal, QObject=mock_qobject),
+            "PyQt6.QtGui": MagicMock(),
+            "PyQt6.QtWidgets": MagicMock(),
+            "core.hotkey": MagicMock(GlobalHotkey=MagicMock),
+        }):
+            saved = sys.modules.pop("core.tray_manager", None)
+            try:
+                from core.tray_manager import TrayManager
+                window = MagicMock()
+                window.windowIcon.return_value = MagicMock(isNull=MagicMock(return_value=False))
+                t = TrayManager(window)
+                self.assertIsNone(t._hotkey)
+            finally:
+                if saved is not None:
+                    sys.modules["core.tray_manager"] = saved
+
+    def test_tray_hotkey_label_default(self):
+        mock_qobject = type("QObject", (), {"__init__": lambda self, *a, **kw: None})
+        mock_signal = MagicMock()
+        with patch.dict("sys.modules", {
+            "PyQt6.QtCore": MagicMock(pyqtSignal=mock_signal, QObject=mock_qobject),
+            "PyQt6.QtGui": MagicMock(),
+            "PyQt6.QtWidgets": MagicMock(),
+            "core.hotkey": MagicMock(GlobalHotkey=MagicMock),
+        }):
+            saved = sys.modules.pop("core.tray_manager", None)
+            try:
+                from core.tray_manager import TrayManager
+                window = MagicMock()
+                window.windowIcon.return_value = MagicMock(isNull=MagicMock(return_value=False))
+                t = TrayManager(window)
+                label = t.hotkey_label()
+                self.assertEqual(label, "Ctrl+Alt+J")
+            finally:
+                if saved is not None:
+                    sys.modules["core.tray_manager"] = saved
+
+    def test_uninstall_clears_hotkey(self):
+        mock_qobject = type("QObject", (), {"__init__": lambda self, *a, **kw: None})
+        mock_signal = MagicMock()
+        with patch.dict("sys.modules", {
+            "PyQt6.QtCore": MagicMock(pyqtSignal=mock_signal, QObject=mock_qobject),
+            "PyQt6.QtGui": MagicMock(),
+            "PyQt6.QtWidgets": MagicMock(),
+            "core.hotkey": MagicMock(GlobalHotkey=MagicMock),
+        }):
+            saved = sys.modules.pop("core.tray_manager", None)
+            try:
+                from core.tray_manager import TrayManager
+                window = MagicMock()
+                window.windowIcon.return_value = MagicMock(isNull=MagicMock(return_value=False))
+                t = TrayManager(window)
+                mock_hk = MagicMock()
+                t._hotkey = mock_hk
+                t.uninstall()
+                mock_hk.stop.assert_called_once()
+                self.assertIsNone(t._hotkey)
+            finally:
+                if saved is not None:
+                    sys.modules["core.tray_manager"] = saved
+
+
 if __name__ == "__main__":
     unittest.main()
