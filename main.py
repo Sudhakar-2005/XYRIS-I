@@ -562,6 +562,7 @@ class JarvisLive:
         # guessed; see _play_audio.
         self._out_latency          = 0.20    # seconds, replaced with the real value
         self._tail_until           = 0.0     # monotonic time the echo tail expires
+        self._barge_blocks         = 0       # consecutive voice-positive blocks for barge-in
         # Wall-clock time at which the audio written next will begin to sound.
         # The mouth is scheduled against this, never against "now": batches are
         # handed to the device far faster than they play, so "now" ran the lips
@@ -855,6 +856,7 @@ class JarvisLive:
             self._is_speaking = value
         if value:
             self._tail_until = 0.0
+            self._barge_blocks = 0   # reset barge-in counter at start of each turn
         else:
             # Hold the guard open across the device's own output latency plus a
             # margin for the room. The microphone is NOT muted during it — the
@@ -1327,12 +1329,21 @@ class JarvisLive:
             if jarvis_speaking:
                 # Nothing is streamed while JARVIS talks.
                 #
-                # Interrupting by voice used to live here: `EchoGuard` can pick a
-                # user out from under our own echo, and `core/echo.py` still does
-                # that for the tail below. Re-enabling is small — classify each
-                # block here and call interrupt() after `required_blocks` of
-                # agreement — but it depends on the listener's room, so it stays
-                # out until it can be tried on real hardware.
+                # Barge-in: classify each mic block through the EchoGuard.
+                # After `required_blocks` of sustained "this is a real voice,
+                # not our echo", cut the answer short — the way a person stops
+                # when interrupted.
+                try:
+                    if self._echo.is_user_speech(
+                            indata, SEND_SAMPLE_RATE, _pcm_level(indata)):
+                        self._barge_blocks += 1
+                        if self._barge_blocks >= self._echo.required_blocks:
+                            self._barge_blocks = 0
+                            self.interrupt()
+                    else:
+                        self._barge_blocks = 0
+                except Exception:
+                    pass
                 return
 
             # ── Echo tail ────────────────────────────────────────────────────
