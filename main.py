@@ -848,7 +848,6 @@ class JarvisLive:
             "I want aoede", "activate leda", "be fenrir",
             "fenrir", "kore", etc.
         """
-        import re as _re
         from core.persona import PERSONA_BY_ID
 
         _text = text.strip().lower()
@@ -868,7 +867,7 @@ class JarvisLive:
             r"change\s+to\s+(fenrir|zephyr|kore|charon|aoede|leda)",
         ]
         for pat in patterns:
-            m = _re.search(pat, _text)
+            m = re.search(pat, _text)
             if m:
                 return m.group(1)
 

@@ -5423,8 +5423,6 @@ class MainWindow(QMainWindow):
 
     def _open_persona_selector(self):
         """Open the persona selector overlay."""
-        from core.persona import get_all_personas as _gap
-
         # Get active persona from registry
         _active_id = "charon"
         if hasattr(self, 'get_persona_registry') and self.get_persona_registry:
@@ -5811,6 +5809,10 @@ class JarvisUI:
     @get_persona_registry.setter
     def get_persona_registry(self, cb):
         self._win.get_persona_registry = cb
+
+    def update_persona_indicator(self, persona_id: str):
+        """Update the persona indicator label in the header."""
+        self._win.update_persona_indicator(persona_id)
 
     def show_confirm(self, title: str, detail: str) -> None:
         """Thread-safe: raise the irreversible-action gate. Called from action
