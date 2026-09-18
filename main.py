@@ -836,6 +836,9 @@ class JarvisLive:
         # Reconnect with the new persona + voice (lose context on voice change)
         self.request_reconnect(keep_context=False, reason=f"persona switch to {new_persona.name}")
 
+        # Update the UI persona indicator
+        self.ui.update_persona_indicator(persona_id)
+
     def _detect_persona_switch(self, text: str) -> str | None:
         """Detect persona switch intents in user text.
 
