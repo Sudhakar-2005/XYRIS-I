@@ -382,3 +382,18 @@ def save_plugin_enabled(plugin_name: str, enabled: bool) -> None:
     plugins_cfg[plugin_name] = enabled
     data["plugins_enabled"] = plugins_cfg
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
+# ── Persona ──────────────────────────────────────────────────────────────────
+
+DEFAULT_PERSONA_CFG = "charon"
+
+
+def get_active_persona() -> str:
+    """Return the saved persona id, or the default if not set."""
+    return load_api_keys().get("active_persona", DEFAULT_PERSONA_CFG)
+
+
+def save_active_persona(persona_id: str) -> None:
+    """Persist the active persona id to config."""
+    _save_flag("active_persona", persona_id.strip().lower())

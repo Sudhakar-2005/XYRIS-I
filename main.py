@@ -631,6 +631,18 @@ class JarvisLive:
         self.ui.get_plugin_settings = self._plugin_registry.settings_schemas  # ⚙ settings tab
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
 
+        # ── Persona Engine ────────────────────────────────────────────────
+        from core.persona_registry import PersonaRegistry
+        from memory.config_manager import get_active_persona as _get_persona_cfg
+        self._persona_registry = PersonaRegistry()
+        self._persona_registry.load_from_config(_get_persona_cfg())
+        self.ui.get_persona_registry = lambda: self._persona_registry
+        self.ui.on_persona_change = self._on_persona_change
+
+        # Set initial persona indicator in the UI
+        _active_persona = self._persona_registry.get_active()
+        self.ui.update_persona_indicator(_active_persona.id)
+
         # ── Wake word ────────────────────────────────────────────────────────
         # _awake gates the mic (see _listen_audio) and the background speakers.
         # It is True whenever wake word is OFF, so default behaviour is unchanged.
@@ -796,6 +808,69 @@ class JarvisLive:
         voice is a deliberate, rare act; losing it on a dropped packet was not."""
         self.request_reconnect(keep_context=False, reason="new voice")
 
+    def _on_persona_change(self, persona_id: str):
+        """Persona selector applied.
+
+        Switches the active persona, updates the voice mapping, and
+        rebuilds the session so the new persona prompt takes effect.
+        The conversation memory is preserved — only the presentation
+        layer changes."""
+        from memory.config_manager import save_active_persona, save_voice
+
+        old_name = self._persona_registry.get_active_name()
+        try:
+            new_persona = self._persona_registry.switch_to(persona_id)
+        except ValueError as exc:
+            print(f"[Persona] ⚠ {exc}")
+            return
+
+        # Persist the choice and update the voice
+        save_active_persona(persona_id)
+        save_voice(new_persona.voice_id)
+
+        print(
+            f"[Persona] {old_name} → {new_persona.name} "
+            f"({new_persona.emoji}, voice={new_persona.voice_id})"
+        )
+
+        # Reconnect with the new persona + voice (lose context on voice change)
+        self.request_reconnect(keep_context=False, reason=f"persona switch to {new_persona.name}")
+
+    def _detect_persona_switch(self, text: str) -> str | None:
+        """Detect persona switch intents in user text.
+
+        Returns the persona id if detected, None otherwise.
+        Matches patterns like:
+            "switch to fenrir", "use kore", "charon mode",
+            "I want aoede", "activate leda", "be fenrir",
+            "fenrir", "kore", etc.
+        """
+        import re as _re
+        from core.persona import PERSONA_BY_ID
+
+        _text = text.strip().lower()
+
+        # Direct name mention (single word)
+        if _text in PERSONA_BY_ID:
+            return _text
+
+        # Pattern matching
+        patterns = [
+            r"switch(?:\s+to)\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"use\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"(fenrir|zephyr|kore|charon|aoede|leda)\s+mode",
+            r"i\s+want\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"activate\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"be\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"change\s+to\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+        ]
+        for pat in patterns:
+            m = _re.search(pat, _text)
+            if m:
+                return m.group(1)
+
+        return None
+
     def _on_audio_device_change(self):
         """Microphone or speaker changed. Both streams are opened inside the
         session TaskGroup, so they can only be re-opened by rebuilding it —
@@ -839,6 +914,15 @@ class JarvisLive:
         if self._wake_enabled and not self._awake:
             self.ui.write_log("SYS: I'm asleep — say 'Hey Jarvis' or tap WAKE NOW first.")
             return
+
+        # ── Persona switch intercept ────────────────────────────────────
+        # Detect "switch to <persona>", "use <persona>", "<persona> mode",
+        # etc. before sending to the LLM so the switch is instant.
+        _persona_id = self._detect_persona_switch(text)
+        if _persona_id:
+            self._on_persona_change(_persona_id)
+            return
+
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"role": "user", "parts": [{"text": text}]},
@@ -1018,6 +1102,13 @@ class JarvisLive:
         parts = [time_ctx, identity_ctx]
         if mem_str:
             parts.append(mem_str)
+
+        # Persona Engine — inject active persona profile between memory
+        # and the base prompt so the model knows *how* to communicate.
+        _persona_prompt = self._persona_registry.get_system_prompt_addition()
+        if _persona_prompt:
+            parts.append(_persona_prompt)
+
         parts.append(sys_prompt)
 
         cfg = dict(

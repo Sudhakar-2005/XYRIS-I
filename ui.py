@@ -1808,6 +1808,180 @@ class CustomizeOverlay(QWidget):
         self.hide()
 
 
+class PersonaSelectorOverlay(QWidget):
+    """Floating overlay — select from six AETHER-I personas."""
+
+    switched = pyqtSignal(str)   # persona_id
+    _OW, _OH = 480, 520
+
+    def __init__(self, active_persona_id: str = "charon", parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            PersonaSelectorOverlay {{
+                background: rgba(0, 6, 10, 245);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+        self.setFixedSize(self._OW, self._OH)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(6)
+
+        def _lbl(txt, fs=9, bold=False, color=C.PRI, align=Qt.AlignmentFlag.AlignCenter):
+            w = QLabel(txt); w.setAlignment(align)
+            w.setFont(QFont("Courier New", fs,
+                            QFont.Weight.Bold if bold else QFont.Weight.Normal))
+            w.setStyleSheet(f"color: {color}; background: transparent;")
+            return w
+
+        lay.addWidget(_lbl("🎭  SELECT PERSONA", 12, True))
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
+        lay.addWidget(sep)
+
+        lay.addWidget(_lbl("All personas share the same memory, tools, and intelligence.", 8,
+                            color=C.TEXT_DIM))
+
+        # Persona cards
+        from core.persona import get_all_personas
+        self._cards: dict[str, QPushButton] = {}
+        self._active_id = active_persona_id
+
+        grid = QGridLayout()
+        grid.setSpacing(6)
+        personas = get_all_personas()
+        for idx, p in enumerate(personas):
+            row, col = divmod(idx, 2)
+            card = QPushButton()
+            card.setCheckable(True)
+            card.setFixedSize(210, 130)
+            card.setCursor(Qt.CursorShape.PointingHandCursor)
+            card.setFont(QFont("Courier New", 8))
+            card.clicked.connect(lambda _=False, pid=p.id: self._pick(pid))
+
+            is_active = (p.id == active_persona_id)
+            card.setChecked(is_active)
+            border = C.PRI if is_active else C.BORDER
+            card.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C.PANEL2};
+                    border: 1px solid {border};
+                    border-radius: 6px;
+                    text-align: left;
+                    padding: 10px;
+                }}
+                QPushButton:hover {{
+                    border: 1px solid {C.PRI};
+                }}
+                QPushButton:checked {{
+                    border: 2px solid {C.PRI};
+                    background: rgba(0, 200, 255, 0.06);
+                }}
+            """)
+            card.setText(
+                f"{p.emoji}  {p.name.upper()}\n"
+                f"{'─' * 24}\n"
+                f"{p.core_traits}\n"
+                f"{p.role}\n"
+                f"{'✦ ACTIVE' if is_active else ''}"
+            )
+            self._cards[p.id] = card
+            grid.addWidget(card, row, col)
+
+        lay.addLayout(grid)
+        lay.addStretch()
+
+        # Close button
+        close_btn = QPushButton("CLOSE")
+        close_btn.setFixedHeight(28)
+        close_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px;
+            }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+        """)
+        close_btn.clicked.connect(self.hide)
+        lay.addWidget(close_btn)
+
+    def _pick(self, persona_id: str):
+        if persona_id == self._active_id:
+            return
+        self._active_id = persona_id
+        # Update card visuals
+        for pid, card in self._cards.items():
+            is_active = (pid == persona_id)
+            card.setChecked(is_active)
+            border = C.PRI if is_active else C.BORDER
+            card.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C.PANEL2};
+                    border: 1px solid {border};
+                    border-radius: 6px;
+                    text-align: left;
+                    padding: 10px;
+                }}
+                QPushButton:hover {{
+                    border: 1px solid {C.PRI};
+                }}
+                QPushButton:checked {{
+                    border: 2px solid {C.PRI};
+                    background: rgba(0, 200, 255, 0.06);
+                }}
+            """)
+            # Refresh text to show/hide ACTIVE badge
+            from core.persona import get_persona as _gp
+            _p = _gp(pid)
+            if _p:
+                card.setText(
+                    f"{_p.emoji}  {_p.name.upper()}\n"
+                    f"{'─' * 24}\n"
+                    f"{_p.core_traits}\n"
+                    f"{_p.role}\n"
+                    f"{'✦ ACTIVE' if is_active else ''}"
+                )
+        self.switched.emit(persona_id)
+
+    def update_active(self, persona_id: str):
+        """Programmatically update the active persona display."""
+        self._active_id = persona_id
+        for pid, card in self._cards.items():
+            is_active = (pid == persona_id)
+            card.setChecked(is_active)
+            border = C.PRI if is_active else C.BORDER
+            card.setStyleSheet(f"""
+                QPushButton {{
+                    background: {C.PANEL2};
+                    border: 1px solid {border};
+                    border-radius: 6px;
+                    text-align: left;
+                    padding: 10px;
+                }}
+                QPushButton:hover {{
+                    border: 1px solid {C.PRI};
+                }}
+                QPushButton:checked {{
+                    border: 2px solid {C.PRI};
+                    background: rgba(0, 200, 255, 0.06);
+                }}
+            """)
+            from core.persona import get_persona as _gp
+            _p = _gp(pid)
+            if _p:
+                card.setText(
+                    f"{_p.emoji}  {_p.name.upper()}\n"
+                    f"{'─' * 24}\n"
+                    f"{_p.core_traits}\n"
+                    f"{_p.role}\n"
+                    f"{'✦ ACTIVE' if is_active else ''}"
+                )
+
+
 class PluginManagerOverlay(QWidget):
     """Floating overlay — lists discovered plugins with per-plugin ON/OFF toggles."""
 
@@ -3164,6 +3338,8 @@ class MainWindow(QMainWindow):
         self.on_interrupt      = None   # callable: () -> None — stop JARVIS mid-speech
         self.on_voice_change   = None   # callable: () -> None — rebuild session with new voice
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
+        self.on_persona_change = None   # callable: (persona_id: str) -> None — switch persona
+        self.get_persona_registry = None  # callable: () -> PersonaRegistry — persona state
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
         self.get_plugins       = None   # callable: () -> list[dict], set by JarvisLive
         self.get_plugin_settings = None # callable: () -> list[dict] settings schemas, set by JarvisLive
@@ -3176,6 +3352,7 @@ class MainWindow(QMainWindow):
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
         self._customize_overlay: CustomizeOverlay | None = None
+        self._persona_overlay: PersonaSelectorOverlay | None = None
 
         central = QWidget()
         central.setStyleSheet(f"background: {C.BG};")
@@ -3896,6 +4073,14 @@ class MainWindow(QMainWindow):
         self._sub_lbl.setFont(QFont("Courier New", 7))
         self._sub_lbl.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
         mid.addWidget(self._sub_lbl)
+
+        # Active persona indicator — shows which persona is speaking
+        self._persona_indicator = QLabel("")
+        self._persona_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._persona_indicator.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._persona_indicator.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
+        mid.addWidget(self._persona_indicator)
+
         lay.addLayout(mid)
         lay.addStretch()
 
@@ -4136,6 +4321,14 @@ class MainWindow(QMainWindow):
         cust_btn.setStyleSheet(_BTN_STYLE_DIM)
         cust_btn.clicked.connect(self._open_customize)
         lay.addWidget(cust_btn)
+
+        pers_btn = QPushButton("🎭  PERSONA")
+        pers_btn.setFixedHeight(26)
+        pers_btn.setFont(QFont("Courier New", 7))
+        pers_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        pers_btn.setStyleSheet(_BTN_STYLE_DIM)
+        pers_btn.clicked.connect(self._open_persona_selector)
+        lay.addWidget(pers_btn)
 
         self._brief_btn = QPushButton()
         self._brief_btn.setFixedHeight(26)
@@ -5178,6 +5371,52 @@ class MainWindow(QMainWindow):
         ov.show()
         self._customize_overlay = ov
 
+    def _open_persona_selector(self):
+        """Open the persona selector overlay."""
+        from core.persona import get_all_personas as _gap
+
+        # Get active persona from registry
+        _active_id = "charon"
+        if hasattr(self, 'get_persona_registry') and self.get_persona_registry:
+            reg = self.get_persona_registry()
+            if reg:
+                _active_id = reg.get_active_id()
+
+        cw = self.centralWidget()
+        if self._persona_overlay:
+            self._persona_overlay.hide()
+        ov = PersonaSelectorOverlay(_active_id, parent=cw)
+        ow, oh = PersonaSelectorOverlay._OW, PersonaSelectorOverlay._OH
+        oh = min(oh, cw.height() - 16)
+        ov.setGeometry(
+            (cw.width()  - ow) // 2,
+            (cw.height() - oh) // 2,
+            ow, oh,
+        )
+        ov.switched.connect(self._on_persona_switch)
+        ov.show()
+        self._persona_overlay = ov
+
+    def _on_persona_switch(self, persona_id: str):
+        """Handle persona switch from the overlay."""
+        if self.on_persona_change:
+            self.on_persona_change(persona_id)
+        # Update overlay display
+        if self._persona_overlay:
+            self._persona_overlay.update_active(persona_id)
+        # Update persona indicator
+        from core.persona import get_persona as _gp
+        _p = _gp(persona_id)
+        if _p:
+            self._persona_indicator.setText(f"{_p.emoji} {_p.name.upper()} — {_p.role}")
+
+    def update_persona_indicator(self, persona_id: str):
+        """Update the persona indicator label in the header."""
+        from core.persona import get_persona as _gp
+        _p = _gp(persona_id)
+        if _p:
+            self._persona_indicator.setText(f"{_p.emoji} {_p.name.upper()} — {_p.role}")
+
     def _preview_ui_color(self, hex_color: str):
         """Live preview — paints the whole interface the new colour (does NOT write to config)."""
         old = current_palette()
@@ -5506,6 +5745,22 @@ class JarvisUI:
     @on_audio_device_change.setter
     def on_audio_device_change(self, cb):
         self._win.on_audio_device_change = cb
+
+    @property
+    def on_persona_change(self):
+        return self._win.on_persona_change
+
+    @on_persona_change.setter
+    def on_persona_change(self, cb):
+        self._win.on_persona_change = cb
+
+    @property
+    def get_persona_registry(self):
+        return self._win.get_persona_registry
+
+    @get_persona_registry.setter
+    def get_persona_registry(self, cb):
+        self._win.get_persona_registry = cb
 
     def show_confirm(self, title: str, detail: str) -> None:
         """Thread-safe: raise the irreversible-action gate. Called from action
