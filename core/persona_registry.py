@@ -60,8 +60,14 @@ class PersonaRegistry:
         """Build the persona-specific block for the system prompt.
 
         This is injected AFTER memory and BEFORE the base prompt.
+        The intensity level (subtle/balanced/strong) scales how much
+        personality expression is requested.
         """
+        from memory.config_manager import get_persona_intensity
+
         p = self._active
+        intensity = get_persona_intensity()
+
         lines = [
             f"[ACTIVE PERSONA — {p.emoji} {p.name.upper()}]",
             f"You are currently speaking as {p.name} ({p.emoji}).",
@@ -70,6 +76,22 @@ class PersonaRegistry:
             f"Communication: {p.communication_style}.",
             "",
         ]
+
+        # Intensity modifier
+        if intensity == "subtle":
+            lines.append(
+                "Expression level: SUBTLE. Keep personality hints minimal. "
+                "Focus on the task. Let personality show only in word choice "
+                "and tone, not in overt behavior."
+            )
+        elif intensity == "strong":
+            lines.append(
+                "Expression level: STRONG. Embody this persona fully. "
+                "Let personality shine through every response — tone, word "
+                "choice, humor, emotion, and style should all reflect who "
+                "you are."
+            )
+        # balanced = no extra modifier (default behavior)
 
         # Behavioral dimensions — only include non-default values
         dims = []

@@ -397,3 +397,25 @@ def get_active_persona() -> str:
 def save_active_persona(persona_id: str) -> None:
     """Persist the active persona id to config."""
     _save_flag("active_persona", persona_id.strip().lower())
+
+
+# ── Persona intensity ────────────────────────────────────────────────────────
+
+VALID_INTENSITY = ("subtle", "balanced", "strong")
+DEFAULT_INTENSITY = "balanced"
+
+
+def get_persona_intensity() -> str:
+    """Return the persona expression intensity (subtle/balanced/strong)."""
+    val = load_api_keys().get("persona_intensity", DEFAULT_INTENSITY)
+    if val not in VALID_INTENSITY:
+        return DEFAULT_INTENSITY
+    return val
+
+
+def save_persona_intensity(intensity: str) -> None:
+    """Persist persona expression intensity."""
+    intensity = intensity.strip().lower()
+    if intensity not in VALID_INTENSITY:
+        intensity = DEFAULT_INTENSITY
+    _save_flag("persona_intensity", intensity)

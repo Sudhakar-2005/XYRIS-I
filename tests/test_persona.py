@@ -509,5 +509,101 @@ class TestPersonaDimensions(unittest.TestCase):
                     f"{p.name}.{dim_name} = {val} > 1.0")
 
 
+class TestPersonaIntensity(unittest.TestCase):
+    """Test persona intensity settings."""
+
+    def test_intensity_config_default(self):
+        from memory.config_manager import get_persona_intensity
+        with patch("memory.config_manager.load_api_keys", return_value={}):
+            self.assertEqual(get_persona_intensity(), "balanced")
+
+    def test_intensity_config_valid(self):
+        from memory.config_manager import get_persona_intensity
+        for level in ("subtle", "balanced", "strong"):
+            with patch("memory.config_manager.load_api_keys",
+                        return_value={"persona_intensity": level}):
+                self.assertEqual(get_persona_intensity(), level)
+
+    def test_intensity_config_invalid_falls_back(self):
+        from memory.config_manager import get_persona_intensity
+        with patch("memory.config_manager.load_api_keys",
+                    return_value={"persona_intensity": "invalid"}):
+            self.assertEqual(get_persona_intensity(), "balanced")
+
+    def test_intensity_prompt_subtle(self):
+        registry = PersonaRegistry()
+        registry.switch_to("kore")
+        with patch("memory.config_manager.get_persona_intensity",
+                    return_value="subtle"):
+            prompt = registry.get_system_prompt_addition()
+            self.assertIn("SUBTLE", prompt)
+            self.assertIn("minimal", prompt.lower())
+
+    def test_intensity_prompt_strong(self):
+        registry = PersonaRegistry()
+        registry.switch_to("kore")
+        with patch("memory.config_manager.get_persona_intensity",
+                    return_value="strong"):
+            prompt = registry.get_system_prompt_addition()
+            self.assertIn("STRONG", prompt)
+            self.assertIn("Embody", prompt)
+
+    def test_intensity_prompt_balanced(self):
+        registry = PersonaRegistry()
+        registry.switch_to("kore")
+        with patch("memory.config_manager.get_persona_intensity",
+                    return_value="balanced"):
+            prompt = registry.get_system_prompt_addition()
+            # Balanced should NOT contain the intensity modifiers
+            self.assertNotIn("SUBTLE", prompt)
+            self.assertNotIn("STRONG", prompt)
+
+
+class TestVoicePersonaSwitch(unittest.TestCase):
+    """Test voice-based persona switch detection."""
+
+    def setUp(self):
+        self.registry = PersonaRegistry()
+        from core.persona import PERSONA_BY_ID
+        self._by_id = PERSONA_BY_ID
+
+    def _detect(self, text: str) -> str | None:
+        """Replicate the detection logic from main.py."""
+        import re
+        _text = text.strip().lower()
+        if _text in self._by_id:
+            return _text
+        patterns = [
+            r"switch(?:\s+to)\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"use\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"(fenrir|zephyr|kore|charon|aoede|leda)\s+mode",
+            r"i\s+want\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"activate\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"be\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+            r"change\s+to\s+(fenrir|zephyr|kore|charon|aoede|leda)",
+        ]
+        for pat in patterns:
+            m = re.search(pat, _text)
+            if m:
+                return m.group(1)
+        return None
+
+    def test_natural_voice_phrases(self):
+        """Test realistic voice commands."""
+        self.assertEqual(self._detect("switch to fenrir"), "fenrir")
+        self.assertEqual(self._detect("use kore please"), "kore")
+        self.assertEqual(self._detect("charon mode"), "charon")
+        self.assertEqual(self._detect("I want Aoede"), "aoede")
+        self.assertEqual(self._detect("activate Leda"), "leda")
+
+    def test_ambient_speech_not_detected(self):
+        """Normal conversation should not trigger persona switch."""
+        self.assertIsNone(self._detect("what is the weather today"))
+        self.assertIsNone(self._detect("open paint for me"))
+        self.assertIsNone(self._detect("how are you doing"))
+        self.assertIsNone(self._detect("search my files"))
+        self.assertIsNone(self._detect("send an email"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

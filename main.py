@@ -1647,6 +1647,20 @@ class JarvisLive:
                                         "text": full_in,
                                         "ts": datetime.now().isoformat(),
                                     }))
+
+                                # ── Voice persona switch intercept ────────
+                                # If the user said a persona switch command,
+                                # handle it immediately and suppress the LLM
+                                # response for this turn.
+                                _vp_id = self._detect_persona_switch(full_in)
+                                if _vp_id:
+                                    in_buf = []
+                                    out_buf = []
+                                    self._visemes.reset()
+                                    self.interrupt()
+                                    self._on_persona_change(_vp_id)
+                                    continue
+
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()

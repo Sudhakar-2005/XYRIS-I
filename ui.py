@@ -1828,7 +1828,7 @@ class PersonaSelectorOverlay(QWidget):
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 16, 20, 16)
-        lay.setSpacing(6)
+        lay.setSpacing(4)
 
         def _lbl(txt, fs=9, bold=False, color=C.PRI, align=Qt.AlignmentFlag.AlignCenter):
             w = QLabel(txt); w.setAlignment(align)
@@ -1837,12 +1837,12 @@ class PersonaSelectorOverlay(QWidget):
             w.setStyleSheet(f"color: {color}; background: transparent;")
             return w
 
-        lay.addWidget(_lbl("🎭  SELECT PERSONA", 12, True))
+        lay.addWidget(_lbl("🎭  SELECT PERSONA", 11, True))
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep)
 
-        lay.addWidget(_lbl("All personas share the same memory, tools, and intelligence.", 8,
+        lay.addWidget(_lbl("All personas share the same memory, tools, and intelligence.", 7,
                             color=C.TEXT_DIM))
 
         # Persona cards
@@ -1908,6 +1908,43 @@ class PersonaSelectorOverlay(QWidget):
         """)
         close_btn.clicked.connect(self.hide)
         lay.addWidget(close_btn)
+
+        # ── Intensity setting ────────────────────────────────────────────
+        from memory.config_manager import get_persona_intensity
+
+        int_row = QHBoxLayout(); int_row.setSpacing(4)
+        int_row.addWidget(_lbl("INTENSITY:", 7, color=C.TEXT_DIM,
+                               align=Qt.AlignmentFlag.AlignLeft))
+        self._intensity_btns: dict[str, QPushButton] = {}
+        _cur_int = get_persona_intensity()
+        for level in ("subtle", "balanced", "strong"):
+            b = QPushButton(level.upper())
+            b.setCheckable(True)
+            b.setFixedHeight(20)
+            b.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setChecked(level == _cur_int)
+            b.clicked.connect(lambda _=False, lv=level: self._on_intensity_pick(lv))
+            self._intensity_btns[level] = b
+            int_row.addWidget(b)
+        lay.addLayout(int_row)
+
+        # ── Set as default ───────────────────────────────────────────────
+        def_row = QHBoxLayout(); def_row.setSpacing(4)
+        self._default_btn = QPushButton(f"SET CURRENT AS DEFAULT")
+        self._default_btn.setFixedHeight(20)
+        self._default_btn.setFont(QFont("Courier New", 7))
+        self._default_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._default_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px;
+            }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+        """)
+        self._default_btn.clicked.connect(self._set_as_default)
+        def_row.addWidget(self._default_btn)
+        lay.addLayout(def_row)
 
     def _pick(self, persona_id: str):
         if persona_id == self._active_id:
@@ -1980,6 +2017,19 @@ class PersonaSelectorOverlay(QWidget):
                     f"{_p.role}\n"
                     f"{'✦ ACTIVE' if is_active else ''}"
                 )
+
+    def _on_intensity_pick(self, level: str):
+        """Handle intensity level selection."""
+        from memory.config_manager import save_persona_intensity
+        save_persona_intensity(level)
+        for lv, btn in self._intensity_btns.items():
+            btn.setChecked(lv == level)
+
+    def _set_as_default(self):
+        """Set the currently selected persona as the default."""
+        from memory.config_manager import save_active_persona
+        save_active_persona(self._active_id)
+        self._default_btn.setText(f"DEFAULT: {self._active_id.upper()}")
 
 
 class PluginManagerOverlay(QWidget):
