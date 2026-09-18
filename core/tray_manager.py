@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING, Callable, Optional
 
-from PyQt6.QtCore import pyqtSignal, QObject
+from PyQt6.QtCore import pyqtSignal, QObject, QMetaObject, Qt
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
 
@@ -34,6 +34,7 @@ class TrayManager(QObject):
 
     quit_requested = pyqtSignal()
     restore_requested = pyqtSignal()
+    _hotkey_restore_sig = pyqtSignal()
 
     def __init__(
         self,
@@ -46,6 +47,7 @@ class TrayManager(QObject):
         self._on_quit = on_quit
         self._tray: Optional[QSystemTrayIcon] = None
         self._hotkey: Optional[GlobalHotkey] = None
+        self._hotkey_restore_sig.connect(self._restore, Qt.ConnectionType.QueuedConnection)
 
     def install(self) -> None:
         """Create and show the tray icon and global hotkey."""
@@ -80,8 +82,9 @@ class TrayManager(QObject):
         self._tray.setToolTip("JARVIS — Mark LIV  (Ctrl+Alt+J to open)")
         self._tray.show()
 
-        # Start the global open hotkey
-        self._hotkey = GlobalHotkey(self._restore)
+        # Start the global open hotkey — callback emits a signal so the
+        # actual Qt work happens on the main thread.
+        self._hotkey = GlobalHotkey(self._hotkey_restore_sig.emit)
         self._hotkey.start()
 
     def uninstall(self) -> None:

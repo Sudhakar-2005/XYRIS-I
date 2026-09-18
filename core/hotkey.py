@@ -180,19 +180,18 @@ DEFAULT_OPEN_CHORD = _DEFAULT_OPEN_CHORD
 
 _OPEN_VK = {
     "ctrl": 0x11, "alt": 0x12, "shift": 0x10,
-    "j": 0x4A, "space": 0x20, "f8": 0x77, "f9": 0x78, "f10": 0x79,
+    "j": 0x4A, "k": 0x4B, "space": 0x20, "f8": 0x77, "f9": 0x78, "f10": 0x79,
 }
 
-_OPEN_MOD_MAP = {
-    "ctrl": 0x0002, "alt": 0x0001, "shift": 0x0004, "win": 0x0008,
-}
+_POLL_HZ_OPEN = 20.0
+_DEBOUNCE_OPEN = 0.08   # chord must be held 80 ms to fire
 
 
 class GlobalHotkey:
     """System-wide hotkey that fires a callback when pressed.
 
-    Uses RegisterHotKey + hidden message window on Windows.
-    On other platforms, falls back to a polling thread via GetAsyncKeyState.
+    Uses GetAsyncKeyState polling on Windows — the same proven approach
+    as PushToTalk.  Works from any application, no message loop needed.
 
     Usage:
         def on_hotkey():
@@ -205,150 +204,79 @@ class GlobalHotkey:
         hk.stop()
     """
 
-    _id_counter = 1
-
     def __init__(self, callback, chord=_DEFAULT_OPEN_CHORD):
         self._callback = callback
         self._chord = tuple(chord)
         self._thread = None
         self._stop = threading.Event()
-        self._hwnd = None
-        self._hotkey_id = None
-        self._registered = False
+        self._scope = "none"
 
     @property
     def chord_label(self) -> str:
         return chord_label(self._chord)
 
+    @property
+    def scope(self) -> str:
+        return self._scope
+
     def start(self) -> bool:
-        """Begin listening. Returns True if a global hook was installed."""
+        """Begin listening.  Returns True if a global hook is running."""
         self.stop()
         self._stop.clear()
-        if _OS == "Windows":
-            return self._start_win()
+        if _OS == "Windows" and self._can_poll():
+            self._scope = "global"
+            self._thread = threading.Thread(
+                target=self._poll_loop, name="global-open-hotkey", daemon=True
+            )
+            self._thread.start()
+            return True
+        self._scope = "none"
         return False
 
     def stop(self) -> None:
         self._stop.set()
-        if _OS == "Windows":
-            self._stop_win()
-        t = self._thread
-        self._thread = None
+        t, self._thread = self._thread, None
         if t is not None and t.is_alive():
             t.join(timeout=1.0)
-        self._registered = False
+        self._scope = "none"
 
-    # ── Windows: RegisterHotKey + message window ────────────────────────────
+    # ── internals ───────────────────────────────────────────────────────────
 
-    def _start_win(self) -> bool:
+    def _can_poll(self) -> bool:
         try:
             import ctypes
-            import ctypes.wintypes as wt
+            ctypes.windll.user32.GetAsyncKeyState  # noqa: B018
+            return all(k in _OPEN_VK for k in self._chord)
+        except Exception:
+            return False
 
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
+    def _poll_loop(self) -> None:
+        import ctypes
+        user32 = ctypes.windll.user32
+        codes = [_OPEN_VK[k] for k in self._chord]
+        period = 1.0 / _POLL_HZ_OPEN
+        down_since = 0.0
+        fired = False
 
-            mod = 0
-            vk = None
-            for k in self._chord:
-                if k in _OPEN_MOD_MAP:
-                    mod |= _OPEN_MOD_MAP[k]
-                elif k in _OPEN_VK:
-                    vk = _OPEN_VK[k]
-
-            if mod == 0 or vk is None:
-                return False
-
-            self._hotkey_id = GlobalHotkey._id_counter
-            GlobalHotkey._id_counter += 1
-
-            # Create a hidden message-only window
-            WM_HOTKEY = 0x0312
-            HWND_MESSAGE = -3
-
-            WNDPROC = ctypes.WINFUNCTYPE(
-                ctypes.c_long, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM
-            )
-
-            def _wnd_proc(hwnd, msg, wparam, lparam):
-                if msg == WM_HOTKEY and wparam == self._hotkey_id:
+        while not self._stop.is_set():
+            try:
+                down = all(user32.GetAsyncKeyState(c) & 0x8000 for c in codes)
+            except Exception:
+                break
+            now = time.monotonic()
+            if down:
+                if down_since == 0.0:
+                    down_since = now
+                    fired = False
+                elif not fired and (now - down_since) >= _DEBOUNCE_OPEN:
+                    fired = True
                     try:
                         self._callback()
                     except Exception:
                         pass
-                return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+            else:
+                down_since = 0.0
+                fired = False
+            self._stop.wait(period)
 
-            self._wnd_proc_ref = WNDPROC(_wnd_proc)
-
-            h_instance = kernel32.GetModuleHandleW(None)
-
-            wc = wt.WNDCLASSEXW()
-            wc.cbSize = ctypes.sizeof(wc)
-            wc.lpfnWndProc = self._wnd_proc_ref
-            wc.hInstance = h_instance
-            wc.lpszClassName = f"JARVIS_GlobalHotkey_{self._hotkey_id}"
-
-            atom = user32.RegisterClassExW(ctypes.byref(wc))
-            if not atom:
-                return False
-
-            self._hwnd = user32.CreateWindowExW(
-                0, wc.lpszClassName, "", 0, 0, 0, 0, 0,
-                HWND_MESSAGE, None, h_instance, None,
-            )
-            if not self._hwnd:
-                user32.UnregisterClass(wc.lpszClassName, h_instance)
-                return False
-
-            if not user32.RegisterHotKey(self._hwnd, self._hotkey_id, mod, vk):
-                user32.DestroyWindow(self._hwnd)
-                user32.UnregisterClass(wc.lpszClassName, h_instance)
-                self._hwnd = None
-                return False
-
-            self._registered = True
-            self._wc_class = wc.lpszClassName
-            self._h_instance = h_instance
-
-            # Message pump thread
-            self._thread = threading.Thread(
-                target=self._msg_loop, name="global-hotkey", daemon=True
-            )
-            self._thread.start()
-            return True
-
-        except Exception:
-            return False
-
-    def _msg_loop(self) -> None:
-        import ctypes
-        import ctypes.wintypes as wt
-
-        msg = wt.MSG()
-        user32 = ctypes.windll.user32
-
-        while not self._stop.is_set():
-            ret = user32.PeekMessageW(ctypes.byref(msg), self._hwnd, 0, 0, 1)
-            if ret:
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
-            self._stop.wait(0.02)
-
-    def _stop_win(self) -> None:
-        if not self._registered:
-            return
-        try:
-            import ctypes
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-
-            if self._hwnd is not None:
-                user32.UnregisterHotKey(self._hwnd, self._hotkey_id)
-                user32.DestroyWindow(self._hwnd)
-            if hasattr(self, "_wc_class") and self._wc_class:
-                user32.UnregisterClass(self._wc_class, self._h_instance)
-        except Exception:
-            pass
-        finally:
-            self._hwnd = None
-            self._registered = False
+        self._scope = "none"

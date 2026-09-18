@@ -277,7 +277,7 @@ class TestGlobalHotkey(unittest.TestCase):
         cb = MagicMock()
         hk = GlobalHotkey(cb)
         hk.stop()
-        self.assertFalse(hk._registered)
+        self.assertEqual(hk.scope, "none")
 
     def test_custom_chord(self):
         from core.hotkey import GlobalHotkey
