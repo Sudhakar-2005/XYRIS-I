@@ -4467,6 +4467,14 @@ class MainWindow(QMainWindow):
 
         self._refresh_talk_btns()
 
+        self._gesture_btn = QPushButton()
+        self._gesture_btn.setFixedHeight(26)
+        self._gesture_btn.setFont(QFont("Courier New", 7))
+        self._gesture_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._gesture_btn.clicked.connect(self._toggle_gesture_control)
+        lay.addWidget(self._gesture_btn)
+        self._refresh_gesture_btn()
+
         self._hud_btn = QPushButton()
         self._hud_btn.setFixedHeight(26)
         self._hud_btn.setFont(QFont("Courier New", 7))
@@ -5304,6 +5312,48 @@ class MainWindow(QMainWindow):
             if face else
             "A reactor core that turns with the state and moves with your voice. "
             "Tap to switch to the animated head.")
+
+    def _refresh_gesture_btn(self):
+        if not hasattr(self, '_gesture_btn'):
+            return
+        try:
+            from memory.config_manager import is_gesture_enabled
+            enabled = is_gesture_enabled()
+        except Exception:
+            enabled = False
+        _on = f"""
+            QPushButton {{ background: #001a18; color: {C.GREEN};
+                border: 1px solid {C.GREEN_D}; border-radius: 3px;
+                text-align: left; padding: 0 8px; }}
+            QPushButton:hover {{ background: #002010; }}"""
+        _off = f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_DIM};
+                border: 1px solid {C.BORDER}; border-radius: 3px;
+                text-align: left; padding: 0 8px; }}
+            QPushButton:hover {{ color: {C.TEXT}; border: 1px solid {C.BORDER_B}; }}"""
+        self._gesture_btn.setText("✋  GESTURE CONTROL: ON" if enabled
+                                  else "✋  GESTURE CONTROL: OFF")
+        self._gesture_btn.setStyleSheet(_on if enabled else _off)
+        self._gesture_btn.setToolTip(
+            "Control the UI with hand gestures via webcam. "
+            "Pinch to click, point to move, open palm to pause." if enabled
+            else "Enable hand gesture control through your webcam.")
+
+    def _toggle_gesture_control(self):
+        try:
+            from memory.config_manager import is_gesture_enabled, set_gesture_enabled
+            new_val = not is_gesture_enabled()
+            set_gesture_enabled(new_val)
+            if self._gesture_engine:
+                if new_val:
+                    self._gesture_engine.start()
+                    self.write_log("SYS: Gesture control enabled")
+                else:
+                    self._gesture_engine.stop()
+                    self.write_log("SYS: Gesture control disabled")
+            self._refresh_gesture_btn()
+        except Exception as e:
+            self.write_log(f"ERR: Gesture toggle failed — {e}")
 
     def _toggle_hud_style(self):
         """Swap the centrepiece. Both objects stay in memory, so the change is
