@@ -419,3 +419,40 @@ def save_persona_intensity(intensity: str) -> None:
     if intensity not in VALID_INTENSITY:
         intensity = DEFAULT_INTENSITY
     _save_flag("persona_intensity", intensity)
+
+
+# ── Gesture Control ─────────────────────────────────────────────────────────
+
+DEFAULT_GESTURE_CFG = {
+    "gesture_enabled": False,
+    "gesture_camera_index": 0,
+    "gesture_confidence_threshold": 0.7,
+    "gesture_smoothing": 0.3,
+    "gesture_mirror_mode": True,
+}
+
+
+def get_gesture_settings() -> dict:
+    """Return gesture control settings."""
+    data = load_api_keys()
+    result = {}
+    for key, default in DEFAULT_GESTURE_CFG.items():
+        result[key] = data.get(key, default)
+    return result
+
+
+def save_gesture_setting(key: str, value) -> None:
+    """Persist a single gesture setting."""
+    if key not in DEFAULT_GESTURE_CFG:
+        return
+    _save_flag(key, value)
+
+
+def is_gesture_enabled() -> bool:
+    """Check if gesture control is enabled."""
+    return bool(load_api_keys().get("gesture_enabled", False))
+
+
+def set_gesture_enabled(enabled: bool) -> None:
+    """Enable or disable gesture control."""
+    _save_flag("gesture_enabled", bool(enabled))

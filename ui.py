@@ -3358,6 +3358,8 @@ class MainWindow(QMainWindow):
     _quiz_sig       = pyqtSignal(str, object, object)  # (topic, questions, grader)
     _quiz_hide_sig  = pyqtSignal()
     _review_sig     = pyqtSignal(str, str, object, object)  # document review payload
+    _gesture_sig    = pyqtSignal(str, object)   # (gesture_name, gesture_data)
+    _gesture_state_sig = pyqtSignal(str)         # gesture engine state change
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -3520,6 +3522,8 @@ class MainWindow(QMainWindow):
         self._quiz_sig.connect(self._show_quiz)
         self._quiz_hide_sig.connect(self._hide_quiz)
         self._review_sig.connect(self._show_review)
+        self._gesture_sig.connect(self._on_gesture_event)
+        self._gesture_state_sig.connect(self._on_gesture_state)
         self._cam_stop = threading.Event()
 
         # Tray manager (installed by main.py after JarvisLive is created)
@@ -3539,12 +3543,59 @@ class MainWindow(QMainWindow):
         if not self._ready:
             self._show_setup()
 
+        # Gesture cursor overlay (transparent, sits on top of everything)
+        from core.spatial.gesture_cursor import GestureCursorOverlay
+        self._gesture_cursor = GestureCursorOverlay(self.centralWidget())
+        self._gesture_cursor.hide()
+        self._gesture_engine = None  # Set by main.py after JarvisLive init
+
         sc_mute = QShortcut(QKeySequence("F4"), self)
         sc_mute.activated.connect(self._toggle_mute)
         sc_full = QShortcut(QKeySequence("F11"), self)
         sc_full.activated.connect(self._toggle_fullscreen)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
+
+    # --- Gesture integration -------------------------------------------------
+    def _on_gesture_event(self, name: str, data) -> None:
+        """Slot — handle gesture events from the spatial engine."""
+        if name == "pointer_move" and isinstance(data, tuple):
+            self._gesture_cursor.show()
+            self._gesture_cursor.move_to(data[0], data[1])
+        elif name == "state_change":
+            state_map = {
+                "TRACKING": "pointer",
+                "HOVERING": "hover",
+                "PINCH_DETECTED": "select",
+                "SELECTING": "select",
+                "DRAGGING": "drag",
+                "PAUSED": "paused",
+                "CAMERA_ERROR": "error",
+                "INACTIVE": "hidden",
+            }
+            cursor_state = state_map.get(str(data), "hidden")
+            self._gesture_cursor.set_state(cursor_state)
+            if cursor_state == "hidden":
+                self._gesture_cursor.hide()
+
+    def _on_gesture_state(self, state: str) -> None:
+        """Slot — gesture engine state changed."""
+        pass  # Could update status bar or indicator
+
+    def toggle_gesture_control(self) -> None:
+        """Toggle gesture control on/off."""
+        if self._gesture_engine is None:
+            return
+        if self._gesture_engine.is_running:
+            self._gesture_engine.stop()
+            self._gesture_cursor.hide()
+            self._gesture_cursor.set_state("hidden")
+            self._log.append_log("Gesture control OFF")
+        else:
+            if self._gesture_engine.start():
+                self._log.append_log("Gesture control ON — show your hand")
+            else:
+                self._log.append_log("Gesture control unavailable — camera error")
 
     # --- Tray integration ----------------------------------------------------
     def closeEvent(self, event):
@@ -5989,3 +6040,24 @@ class JarvisUI:
         """Thread-safe: remove the system tray icon."""
         if self._win.tray_manager is not None:
             self._win.tray_manager.uninstall()
+
+    # --- Gesture control ------------------------------------------------------
+    def set_gesture_engine(self, engine) -> None:
+        """Set the spatial interaction engine reference."""
+        self._win._gesture_engine = engine
+
+    def toggle_gesture_control(self) -> None:
+        """Thread-safe: toggle gesture control on/off."""
+        self._win.toggle_gesture_control()
+
+    def emit_gesture_event(self, name: str, data) -> None:
+        """Thread-safe: emit a gesture event to the UI."""
+        self._win._gesture_sig.emit(name, data)
+
+    def emit_gesture_state(self, state: str) -> None:
+        """Thread-safe: emit gesture state change."""
+        self._win._gesture_state_sig.emit(state)
+
+    @property
+    def gesture_engine(self):
+        return self._win._gesture_engine

@@ -666,6 +666,34 @@ class JarvisLive:
         self.ui.on_wake_manual   = self._ui_wake_manual   # () -> toggle awake/asleep
         self.ui.on_wake_install  = self._ui_wake_install  # () -> (ok, msg)
 
+        # ── Gesture Control (Spatial Interaction Engine) ─────────────────────
+        self._gesture_engine = None
+        try:
+            from core.spatial.engine import SpatialInteractionEngine
+            from core.spatial.interaction_state import GestureSettings
+            from memory.config_manager import get_gesture_settings as _gs
+
+            _gcfg = _gs()
+            _gs_obj = GestureSettings(
+                enabled=_gcfg.get("gesture_enabled", False),
+                camera_index=_gcfg.get("gesture_camera_index", 0),
+                confidence_threshold=_gcfg.get("gesture_confidence_threshold", 0.7),
+                pointer_smoothing=_gcfg.get("gesture_smoothing", 0.3),
+                mirror_mode=_gcfg.get("gesture_mirror_mode", True),
+            )
+            self._gesture_engine = SpatialInteractionEngine(_gs_obj)
+            self._gesture_engine.on_gesture_event = self._on_gesture_event
+            self.ui.set_gesture_engine(self._gesture_engine)
+
+            # Auto-start if previously enabled
+            if _gs_obj.enabled:
+                self._gesture_engine.start()
+                print("[Spatial] Gesture control enabled")
+        except ImportError as e:
+            print(f"[Spatial] Gesture engine unavailable: {e}")
+        except Exception as e:
+            print(f"[Spatial] Gesture engine init error: {e}")
+
     # ── Wake word: state machine ─────────────────────────────────────────────
 
     def _wake_state(self) -> dict:
@@ -685,6 +713,17 @@ class JarvisLive:
         if not self._wake_detector.ready:
             return self._wake_detector.start()
         return True
+
+    def _on_gesture_event(self, event) -> None:
+        """Handle gesture events from the spatial engine."""
+        try:
+            if hasattr(event, 'pointer_position') and event.pointer_position != (0.0, 0.0):
+                self.ui.emit_gesture_event("pointer_move", event.pointer_position)
+            if hasattr(event, 'intent'):
+                self.ui.emit_gesture_event("intent", str(event.intent.value))
+            self.ui.emit_gesture_state(str(self._gesture_engine.state.name) if self._gesture_engine else "INACTIVE")
+        except Exception as e:
+            print(f"[Spatial] Gesture event error: {e}")
 
     def _on_wake_detected(self) -> None:
         """Called from the detector thread when 'Hey Jarvis' is heard."""
