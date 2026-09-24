@@ -403,5 +403,139 @@ class TestConfigDefaults(unittest.TestCase):
         self.assertLessEqual(DEFAULT_VISUAL_CFG["visual_timeout_s"], 60)
 
 
+# ═══ PHASE 8 — UI INTEGRATION ══════════════════════════════════════════════
+
+class _RecordingPlayer:
+    """Minimal JarvisUI stand-in that records facade calls."""
+
+    def __init__(self):
+        self.states = []
+        self.logs = []
+        self.images = []
+        self.errors = []
+        self.contents = []
+
+    def set_state(self, s): self.states.append(s)
+    def write_log(self, t): self.logs.append(t)
+    def show_image_result(self, b, path="", mime="", dims=""):
+        self.images.append((b, path, mime, dims))
+    def show_image_error(self, msg):
+        self.errors.append(msg)
+    def show_content(self, title, text):
+        self.contents.append((title, text))
+
+
+class TestUIIntegration(unittest.TestCase):
+    """Phase 8: UI facade contract, signals, overlay, state flow, error states."""
+
+    def test_jarvisui_exposes_image_methods(self):
+        from ui import JarvisUI
+        self.assertTrue(callable(getattr(JarvisUI, "show_image_result", None)))
+        self.assertTrue(callable(getattr(JarvisUI, "show_image_error", None)))
+
+    def test_mainwindow_has_image_result_signal(self):
+        from ui import MainWindow
+        self.assertTrue(hasattr(MainWindow, "_image_result_sig"))
+
+    def test_image_overlay_widget_exists(self):
+        from ui import ImageResultOverlay
+        self.assertTrue(callable(getattr(ImageResultOverlay, "show_image", None)))
+        self.assertTrue(callable(getattr(ImageResultOverlay, "_show_error", None)))
+
+    def test_tool_sets_processing_then_listening(self):
+        """Loading state uses the existing AI Core state system (no new machine)."""
+        player = _RecordingPlayer()
+        generate_image({"prompt": ""}, player=player)
+        self.assertIn("PROCESSING", player.states)
+        self.assertIn("LISTENING", player.states)
+        # PROCESSING must come before the failure resets to LISTENING
+        self.assertLess(player.states.index("PROCESSING"),
+                        player.states.index("LISTENING"))
+
+    def test_tool_surfaces_error_state_to_ui(self):
+        player = _RecordingPlayer()
+        generate_image({"prompt": ""}, player=player)
+        self.assertEqual(len(player.errors), 1)
+        self.assertIn("INVALID_PROMPT", player.errors[0])
+
+    def test_tool_shows_image_on_success(self):
+        fake = _FakeProvider()  # returns valid PNG bytes
+        player = _RecordingPlayer()
+        with patch("actions.generate_image.get_provider", return_value=fake):
+            with patch("actions.generate_image._cfg",
+                       return_value={"visual_provider": "fake",
+                                     "visual_autosave": False,
+                                     "visual_max_retries": 0,
+                                     "visual_timeout_s": 2}):
+                msg = generate_image({"prompt": "a test image"}, player=player)
+        self.assertTrue(msg.startswith("[VISUAL_OK"))
+        self.assertEqual(len(player.images), 1)
+        bytes_out, path, mime, dims = player.images[0]
+        self.assertEqual(bytes_out, PNG_1PX)
+        self.assertEqual(mime, "image/png")
+        self.assertEqual(player.errors, [])  # no error state on success
+        # State returns to LISTENING after display
+        self.assertEqual(player.states[-1], "LISTENING")
+
+    def test_generation_failure_shows_error_not_image(self):
+        fake = _FakeProvider(result=VisualGenerationResult.failure(
+            VisualErrorCode.PROVIDER_UNAVAILABLE, "down", provider="fake"))
+        player = _RecordingPlayer()
+        with patch("actions.generate_image.get_provider", return_value=fake):
+            with patch("actions.generate_image._cfg",
+                       return_value={"visual_provider": "fake",
+                                     "visual_autosave": False,
+                                     "visual_max_retries": 0,
+                                     "visual_timeout_s": 1}):
+                msg = generate_image({"prompt": "a cat"}, player=player)
+        self.assertTrue(msg.startswith("[VISUAL_FAILED"))
+        self.assertEqual(len(player.images), 0)  # never show a broken image
+        self.assertEqual(len(player.errors), 1)
+        self.assertIn("PROVIDER_UNAVAILABLE", player.errors[0])
+
+    def test_state_never_stuck_on_processing_after_failure(self):
+        player = _RecordingPlayer()
+        generate_image({"prompt": ""}, player=player)
+        self.assertNotEqual(player.states[-1], "PROCESSING")
+
+    def test_show_image_result_payload_contract(self):
+        """JarvisUI.show_image_result must emit a dict payload on the signal."""
+        from ui import JarvisUI
+        captured = []
+
+        class _Win:
+            class _sig:
+                @staticmethod
+                def emit(p): captured.append(p)
+            _image_result_sig = _sig()
+
+        j = JarvisUI.__new__(JarvisUI)  # bypass __init__ (needs full MainWindow)
+        j._win = _Win()
+        JarvisUI.show_image_result(j, b"PNG", "C:/x.png", "image/png", "10x10")
+        self.assertEqual(len(captured), 1)
+        p = captured[0]
+        self.assertEqual(p["kind"], "image")
+        self.assertEqual(p["bytes"], b"PNG")
+        self.assertEqual(p["path"], "C:/x.png")
+        self.assertEqual(p["mime"], "image/png")
+        self.assertEqual(p["dims"], "10x10")
+
+    def test_show_image_error_payload_contract(self):
+        from ui import JarvisUI
+        captured = []
+
+        class _Win:
+            class _sig:
+                @staticmethod
+                def emit(p): captured.append(p)
+            _image_result_sig = _sig()
+
+        j = JarvisUI.__new__(JarvisUI)
+        j._win = _Win()
+        JarvisUI.show_image_error(j, "TIMEOUT: too slow")
+        self.assertEqual(captured[0]["kind"], "error")
+        self.assertEqual(captured[0]["message"], "TIMEOUT: too slow")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1367,6 +1367,184 @@ class _CameraPreview(QWidget):
         self._timer.start(6_000)   # auto-dismiss after 6 s
 
 
+class ImageResultOverlay(QWidget):
+    """Floating panel for generated images: preview, status, open/save/dismiss.
+
+    Mirrors _CameraPreview's structure but stays until dismissed — a generated
+    image is a result the user may want to keep, not a fleeting camera frame.
+    Shows an error state when generation failed (image area replaced by text).
+    """
+
+    _W, _H = 340, 300
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            ImageResultOverlay {{
+                background: rgba(0, 6, 10, 244);
+                border: 1px solid {C.PRI};
+                border-radius: 6px;
+            }}
+        """)
+        self.setFixedWidth(self._W)
+        self._file_path = ""
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 6, 8, 8)
+        lay.setSpacing(5)
+
+        hdr = QHBoxLayout()
+        self._title = QLabel("◈  GENERATED IMAGE")
+        self._title.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        hdr.addWidget(self._title)
+        hdr.addStretch()
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(16, 16)
+        close_btn.setFont(QFont("Courier New", 8))
+        close_btn.setStyleSheet(
+            f"color: {C.TEXT_DIM}; background: transparent; border: none;")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(self.hide)
+        hdr.addWidget(close_btn)
+        lay.addLayout(hdr)
+
+        self._img_lbl = QLabel()
+        self._img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._img_lbl.setStyleSheet("background: transparent;")
+        self._img_lbl.setMinimumHeight(140)
+        lay.addWidget(self._img_lbl, stretch=1)
+
+        self._status_lbl = QLabel("")
+        self._status_lbl.setFont(QFont("Courier New", 7))
+        self._status_lbl.setWordWrap(True)
+        self._status_lbl.setStyleSheet(
+            f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(self._status_lbl)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        self._open_btn = QPushButton("OPEN")
+        self._save_btn = QPushButton("SAVE AS…")
+        for b in (self._open_btn, self._save_btn):
+            b.setFixedHeight(24)
+            b.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: #00091a; color: {C.PRI};
+                    border: 1px solid {C.PRI_DIM}; border-radius: 3px;
+                }}
+                QPushButton:hover {{
+                    background: {C.PRI_GHO}; border-color: {C.PRI};
+                }}
+                QPushButton:disabled {{
+                    color: {C.TEXT_DIM}; border-color: {C.BORDER};
+                    background: transparent;
+                }}
+            """)
+        self._open_btn.clicked.connect(self._on_open)
+        self._save_btn.clicked.connect(self._on_save_as)
+        btn_row.addWidget(self._open_btn)
+        btn_row.addWidget(self._save_btn)
+        btn_row.addStretch()
+        lay.addLayout(btn_row)
+
+        self.hide()
+
+    # ── Success: show the image ─────────────────────────────────────────────
+    def show_image(self, img_bytes: bytes, file_path: str = "",
+                   mime: str = "", dims: str = "") -> None:
+        px = QPixmap()
+        px.loadFromData(img_bytes or b"")
+        if px.isNull():
+            # Bytes arrived but did not decode — display failure, be truthful.
+            self._show_error("DISPLAY_FAILED: received image could not be decoded.")
+            return
+        self._file_path = file_path or ""
+        self._title.setText("◈  GENERATED IMAGE")
+        self._title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        max_w = self._W - 16
+        max_h = 190
+        scaled = px.scaled(
+            max_w, max_h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._img_lbl.setPixmap(scaled)
+        self._img_lbl.setFixedSize(scaled.width(), scaled.height())
+        self._img_lbl.show()
+
+        bits = [d for d in (dims, mime) if d]
+        if file_path:
+            name = Path(file_path).name
+            bits.append(name)
+        self._status_lbl.setText("  ·  ".join(bits))
+        self._status_lbl.setStyleSheet(
+            f"color: {C.TEXT_DIM}; background: transparent;")
+        self._open_btn.setEnabled(bool(file_path))
+        self._save_btn.setEnabled(bool(img_bytes) or bool(file_path))
+        self.show()
+        self.raise_()
+
+    # ── Failure: show the error, never a broken image ───────────────────────
+    def _show_error(self, message: str) -> None:
+        self._file_path = ""
+        self._title.setText("◈  GENERATION FAILED")
+        self._title.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
+        self._img_lbl.clear()
+        self._img_lbl.setPixmap(QPixmap())
+        self._img_lbl.setFixedSize(self._W - 16, 60)
+        self._img_lbl.setText(message[:160])
+        self._img_lbl.setStyleSheet(
+            f"color: {C.ACC2}; background: transparent; font: 8pt 'Courier New';")
+        self._status_lbl.setText("")
+        self._open_btn.setEnabled(False)
+        self._save_btn.setEnabled(False)
+        self.show()
+        self.raise_()
+
+    # ── Actions ─────────────────────────────────────────────────────────────
+    def _on_open(self):
+        if not self._file_path:
+            return
+        try:
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self._file_path))
+        except Exception:
+            try:
+                import os
+                os.startfile(self._file_path)  # Windows fallback
+            except Exception:
+                pass
+
+    def _on_save_as(self):
+        if not self._file_path:
+            return
+        try:
+            src = Path(self._file_path)
+            default_dir = str(src.parent) if src.parent.exists() \
+                else str(Path.home() / "Pictures")
+            default_name = src.name if src.exists() else "aether_image.png"
+            dest, _ = QFileDialog.getSaveFileName(
+                self, "Save generated image",
+                str(Path(default_dir) / default_name),
+                "Images (*.png *.jpg *.jpeg *.webp);;All Files (*.*)",
+            )
+            if not dest:
+                return
+            dest_p = Path(dest)
+            if dest_p.resolve() == src.resolve():
+                return  # same file — nothing to do
+            import shutil
+            shutil.copy2(src, dest_p)
+            self._status_lbl.setText(f"Saved → {dest_p.name}")
+        except Exception as e:
+            self._status_lbl.setText(f"Save failed: {e}")
+
+
 class SetupOverlay(QWidget):
     done = pyqtSignal(str, str)
 
@@ -3360,6 +3538,7 @@ class MainWindow(QMainWindow):
     _review_sig     = pyqtSignal(str, str, object, object)  # document review payload
     _gesture_sig    = pyqtSignal(str, object)   # (gesture_name, gesture_data)
     _gesture_state_sig = pyqtSignal(str)         # gesture engine state change
+    _image_result_sig = pyqtSignal(object)       # visual generation result/error payload
 
     def __init__(self, face_path: str):
         super().__init__()
@@ -3524,6 +3703,7 @@ class MainWindow(QMainWindow):
         self._review_sig.connect(self._show_review)
         self._gesture_sig.connect(self._on_gesture_event)
         self._gesture_state_sig.connect(self._on_gesture_state)
+        self._image_result_sig.connect(self._show_image_result)
         self._cam_stop = threading.Event()
 
         # Tray manager (installed by main.py after JarvisLive is created)
@@ -3532,6 +3712,9 @@ class MainWindow(QMainWindow):
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
+
+        # Generated-image result overlay (child of central widget)
+        self._image_overlay = ImageResultOverlay(self.centralWidget())
 
         # Clipboard panel (child of central widget, bottom-center)
         self._clipboard_panel = ClipboardPanel(self.centralWidget())
@@ -3621,6 +3804,38 @@ class MainWindow(QMainWindow):
             cw.height() - ph - 28,
             pw, ph,
         )
+
+    # --- Generated image result overlay ------------------------------------
+    def _show_image_result(self, payload):
+        """Slot — visual generation result (main thread).
+
+        payload dict:
+          kind = "image": bytes, path, mime, dims
+          kind = "error": message
+        """
+        if not isinstance(payload, dict):
+            return
+        kind = payload.get("kind", "image")
+        if kind == "error":
+            self._image_overlay._show_error(str(payload.get("message", "Unknown error")))
+        else:
+            self._image_overlay.show_image(
+                payload.get("bytes") or b"",
+                str(payload.get("path") or ""),
+                str(payload.get("mime") or ""),
+                str(payload.get("dims") or ""),
+            )
+        self._position_image_overlay()
+
+    def _position_image_overlay(self):
+        cw = self.centralWidget()
+        pw = self._image_overlay.width() or ImageResultOverlay._W
+        ph = self._image_overlay.height() or ImageResultOverlay._H
+        # Centre of the content/HUD column — prominent but not modal.
+        x = (cw.width() - _RIGHT_W - pw) // 2
+        y = max(40, (cw.height() - ph) // 2)
+        self._image_overlay.setGeometry(x, y, pw, ph)
+        self._image_overlay.raise_()
 
     # --- Live camera stream in HUD area ------------------------------------
     def _on_cam_stream(self, start: bool) -> None:
@@ -4068,6 +4283,9 @@ class MainWindow(QMainWindow):
             cw.height() - ph - 28,
             pw, ph,
         )
+        # Generated-image overlay — reposition if open
+        if hasattr(self, '_image_overlay') and self._image_overlay.isVisible():
+            self._position_image_overlay()
         # Clipboard panel — bottom-center
         if hasattr(self, '_clipboard_panel') and self._clipboard_panel.isVisible():
             self._position_clipboard_panel()
@@ -6058,6 +6276,28 @@ class JarvisUI:
     def show_camera_frame(self, img_bytes: bytes):
         """Thread-safe: show a webcam frame in the small overlay (screen captures)."""
         self._win._camera_sig.emit(img_bytes)
+
+    def show_image_result(self, image_bytes: bytes, file_path: str = "",
+                          mime_type: str = "", dims: str = "") -> None:
+        """Thread-safe: display a generated image in the result overlay.
+
+        Called by the generate_image tool after successful verification.
+        Empty undecodable bytes are handled by the overlay as DISPLAY_FAILED.
+        """
+        self._win._image_result_sig.emit({
+            "kind": "image",
+            "bytes": image_bytes or b"",
+            "path": file_path or "",
+            "mime": mime_type or "",
+            "dims": dims or "",
+        })
+
+    def show_image_error(self, message: str) -> None:
+        """Thread-safe: show a visual-generation failure state (never a broken image)."""
+        self._win._image_result_sig.emit({
+            "kind": "error",
+            "message": str(message or "Image generation failed."),
+        })
 
     def start_camera_stream(self) -> None:
         """Thread-safe: start live camera feed in the full HUD area."""
