@@ -74,11 +74,16 @@ def build_prompt(user_prompt: str, style: str = "") -> str:
     Does NOT invent subjects, environments, or moods the user never asked for.
     """
     p = (user_prompt or "").strip()
-    s = (style or "").strip().lower()
-    hint = _STYLE_HINTS.get(s, s)  # pass through unknown styles verbatim
-    if hint and hint.lower() not in p.lower():
-        return f"{p}, {hint}"
-    return p
+    s = (style or "").strip()
+    if not p:
+        return s  # empty subject: style alone beats a leading comma
+    if not s:
+        return p
+    hint = _STYLE_HINTS.get(s.lower(), s)  # pass through unknown styles verbatim
+    # Skip the hint only when the user already stated that style themselves.
+    if s.lower() in p.lower() or hint.lower() in p.lower():
+        return p
+    return f"{p}, {hint}"
 
 
 # ── Result normalization → spoken/model-facing string (Phase 6/10) ──────────
@@ -485,18 +490,23 @@ def generate_image(
 TOOL = {
     "name": "generate_image",
     "description": (
-        "Generate an image, wallpaper, illustration, concept visual, diagram "
-        "background, logo concept, or any other visual from a text prompt. "
-        "Use this when the user asks to CREATE, GENERATE, MAKE, or DRAW a new "
-        "image or visual — e.g. 'create a futuristic wallpaper', 'generate a "
-        "cyberpunk city', 'make an image of an AI core', 'visualize my project "
-        "architecture', 'concept art of ...'. Works in ANY language (English, "
-        "Tamil, Tanglish, Telugu, etc.). Do NOT use for viewing, opening, "
-        "describing, analyzing, or finding existing images — those are not "
-        "generation. The prompt should faithfully capture what the user asked "
-        "for; do not invent unrelated details. On success it returns a verified "
-        "result; on failure it returns an explicit failure code — never assume "
-        "an image exists unless the result says so."
+        "Generate a NEW image from a text prompt — wallpaper, illustration, "
+        "concept visual, diagram backdrop, logo concept, sci-fi scene, or any "
+        "other visual output. USE THIS WHEN the user asks to create/generate/"
+        "make/draw/design/visualize an image or visual, e.g. 'create a "
+        "futuristic wallpaper', 'generate a cyberpunk city', 'make an image of "
+        "an AI core', 'visualize my project architecture', 'concept art of ...', "
+        "'presentation background', 'logo idea'. Follow-up refinements of a "
+        "previously generated image (e.g. 'make it darker', 'bigger moon', "
+        "'transparent background') mean: call THIS tool again with an adjusted "
+        "prompt — this provider does not edit existing files. Works in ANY "
+        "language (English, Tamil, Tanglish, Telugu, ...): translate the user's "
+        "intent into a faithful English prompt; do NOT invent unrelated details. "
+        "NOT for viewing/opening/showing an existing image, describing or "
+        "analyzing a picture/screenshot, finding an image online, or camera/"
+        "screen vision — those are different tasks. On success the result is "
+        "verified; on failure it returns an explicit failure code — never claim "
+        "an image exists unless the result says [VISUAL_OK]."
     ),
     "parameters": {
         "type": "OBJECT",
