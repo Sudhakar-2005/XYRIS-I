@@ -53,6 +53,7 @@ It's not just an assistant — it's an extension of your digital life.
 | 🖥️ System Control | Launch apps, adjust volume/brightness, WiFi, shortcuts, power — all by voice |
 | 🧩 Autonomous Tasks | High-level planning for complex multi-step goals via agent mode |
 | 👁️ Visual Awareness | Screen capture and webcam vision piped into your main Gemini session, labelled by source |
+| 🎨 Visual Generation | Creates wallpapers, concept art, diagrams and illustrations from voice or text — verified before it claims success, previewed in-app, saved safely |
 | 🧠 Persistent Memory | Deeply remembers projects, preferences, and personal context across sessions |
 | ⌨️ Hybrid Input | Seamlessly switch between keyboard typing and voice commands |
 | 🌅 Morning Briefing | On first boot: greets you, reads the time, recaps yesterday, and fetches live news |
@@ -321,6 +322,7 @@ Mark LIV/
 │   └── ...                   # Drop-in skills (each self-describes via a PLUGIN dict + run())
 ├── actions/                  # Bundled skills — each self-describes via a TOOL dict + handler
 │   ├── web_search.py         # Gemini + DDG parallel search (news, research, price, compare)
+│   ├── generate_image.py     # Visual generation — provider-pluggable, verified results
 │   ├── screen_processor.py   # Screen & webcam capture for vision
 │   ├── background_monitor.py # User-configured topic watching — daily DDG check
 │   ├── proactive.py          # Proactive 2.0 — time/context/rotation-aware check-ins
@@ -345,6 +347,7 @@ Mark LIV/
 │   ├── config_manager.py     # api_keys.json access — key, OS, name, voice, colour, toggles
 │   └── long_term.json        # Persistent store — created on first run
 ├── core/
+│   ├── visual/               # Visual generation provider abstraction (Pollinations, Imagen slot)
 │   ├── prompt.txt            # All prompt wording — {tokens} are filled from the live system at startup
 │   ├── avatar.py             # Avatar renderer — lighting, pose, expression, mouth (QPainter)
 │   ├── avatar_mesh.py        # Head geometry — loads the face, generates skull/neck/rigs
