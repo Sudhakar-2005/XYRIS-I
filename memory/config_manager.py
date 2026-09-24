@@ -456,3 +456,29 @@ def is_gesture_enabled() -> bool:
 def set_gesture_enabled(enabled: bool) -> None:
     """Enable or disable gesture control."""
     _save_flag("gesture_enabled", bool(enabled))
+
+
+# ── Visual Generation ───────────────────────────────────────────────────────
+
+DEFAULT_VISUAL_CFG = {
+    "visual_provider":   "pollinations",   # active provider name
+    "visual_autosave":   True,             # save generated images to disk
+    "visual_save_dir":   "",               # "" → default Pictures/aether_generated
+    "visual_default_ar": "1:1",            # default aspect ratio
+    "visual_default_quality": "standard",  # standard | hd
+    "visual_max_retries": 1,               # bounded retries on transient failure
+    "visual_timeout_s":  30.0,             # per-request timeout
+}
+
+
+def get_visual_settings() -> dict:
+    """Return visual generation settings merged over defaults."""
+    data = load_api_keys()
+    return {k: data.get(k, d) for k, d in DEFAULT_VISUAL_CFG.items()}
+
+
+def save_visual_setting(key: str, value) -> None:
+    """Persist a single visual generation setting."""
+    if key not in DEFAULT_VISUAL_CFG:
+        return
+    _save_flag(key, value)
