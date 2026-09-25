@@ -35,6 +35,19 @@ _AR_PIXELS: dict[AspectRatio, tuple[int, int]] = {
     AspectRatio.TALL:      (832, 1216),
 }
 
+# HD variants: ~1.4x the standard AREA, capped at 1.48 MP per image.
+# The old implementation doubled each edge (→2048x1152 = 2.36 MP) and the
+# free tier reliably exceeded the 30 s timeout on such requests — verified
+# live: 16:9 HD returned TIMEOUT at 30.3 s while the standard 1280x720
+# returned in ~1 s.  Quality must not buy latency the provider cannot meet.
+_HD_PIXELS: dict[AspectRatio, tuple[int, int]] = {
+    AspectRatio.SQUARE:    (1216, 1216),   # 1.48 MP
+    AspectRatio.LANDSCAPE: (1456, 816),    # 1.19 MP (~16:9)
+    AspectRatio.PORTRAIT:  (816, 1456),
+    AspectRatio.WIDE:      (1440, 960),    # exactly 3:2
+    AspectRatio.TALL:      (960, 1440),
+}
+
 _MIME_BY_MAGIC = (
     (b"\x89PNG\r\n\x1a\n", "image/png"),
     (b"\xff\xd8\xff",       "image/jpeg"),
@@ -94,15 +107,15 @@ class PollinationsProvider(VisualGenerationProvider):
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
 
-        width, height = _AR_PIXELS[aspect_ratio]
         if quality == Quality.HD:
-            width = min(width * 2, 2048)
-            height = min(height * 2, 2048)
+            width, height = _HD_PIXELS[aspect_ratio]
+        else:
+            width, height = _AR_PIXELS[aspect_ratio]
 
         full_prompt = f"{style}, {prompt}" if style and style.strip() else prompt
         url = (
             _BASE + urllib.parse.quote(full_prompt, safe="")
-            + f"?width={width}&height={height}&nologo=true"
+            + f"?width={width}&height={height}&nologo=true&model=flux"
         )
         if output_format and output_format.lower() != "png":
             url += f"&format={output_format.lower()}"

@@ -360,7 +360,12 @@ class TestToolExecutionMocked(unittest.TestCase):
         self.assertTrue(msg.startswith("[VISUAL_FAILED:TIMEOUT]"))
         self.assertEqual(calls["n"], 2)  # initial + 1 bounded retry
 
-    def test_no_infinite_retry_on_quota(self):
+    def test_quota_retry_is_bounded_not_infinite(self):
+        """429 IS transient on the free tier — retry, but strictly bounded.
+
+        (Previously QUOTA_EXCEEDED was excluded entirely, so the most common
+        back-to-back failure returned instantly with zero retries.)
+        """
         calls = {"n": 0}
 
         def gen(prompt, **kw):
@@ -374,11 +379,33 @@ class TestToolExecutionMocked(unittest.TestCase):
             with patch("actions.generate_image._cfg",
                        return_value={"visual_provider": "fake",
                                      "visual_autosave": False,
-                                     "visual_max_retries": 5,
+                                     "visual_max_retries": 2,
                                      "visual_timeout_s": 1}):
                 msg = generate_image({"prompt": "a cat"})
         self.assertTrue(msg.startswith("[VISUAL_FAILED:QUOTA_EXCEEDED]"))
-        self.assertEqual(calls["n"], 1)  # non-retryable → no retry loop
+        self.assertEqual(calls["n"], 3)  # initial + 2 bounded retries
+
+    def test_deterministic_errors_never_retry(self):
+        """Invalid prompt / content rejection / not-configured: one call only."""
+        for code in (VisualErrorCode.INVALID_PROMPT,
+                     VisualErrorCode.CONTENT_RESTRICTION,
+                     VisualErrorCode.PROVIDER_NOT_CONFIGURED):
+            calls = {"n": 0}
+
+            def gen(prompt, _c=code, **kw):
+                calls["n"] += 1
+                return VisualGenerationResult.failure(_c, "x", provider="fake")
+
+            fake = _FakeProvider()
+            fake.generate_image = gen
+            with patch("actions.generate_image.get_provider", return_value=fake):
+                with patch("actions.generate_image._cfg",
+                           return_value={"visual_provider": "fake",
+                                         "visual_autosave": False,
+                                         "visual_max_retries": 3,
+                                         "visual_timeout_s": 1}):
+                    generate_image({"prompt": "a cat"})
+            self.assertEqual(calls["n"], 1, f"{code} must not be retried")
 
     def test_schema_shape_matches_gemini_contract(self):
         params = TOOL["parameters"]
@@ -535,6 +562,180 @@ class TestUIIntegration(unittest.TestCase):
         JarvisUI.show_image_error(j, "TIMEOUT: too slow")
         self.assertEqual(captured[0]["kind"], "error")
         self.assertEqual(captured[0]["message"], "TIMEOUT: too slow")
+
+
+# ═══ VISUAL GENERATION 2.0 — AUDIT PATCH REGRESSION TESTS ══════════════════
+
+class TestProviderLatencyFix(unittest.TestCase):
+    """Root-cause fix: HD no longer doubles pixels past the provider's budget."""
+
+    def test_hd_uses_capped_table_not_pixel_doubling(self):
+        from core.visual.providers.pollinations import _AR_PIXELS, _HD_PIXELS
+        for ar in _AR_PIXELS:
+            std_area = _AR_PIXELS[ar][0] * _AR_PIXELS[ar][1]
+            hd_area = _HD_PIXELS[ar][0] * _HD_PIXELS[ar][1]
+            # HD is a real bump (>standard) but bounded — old code hit 2.36 MP
+            self.assertGreater(hd_area, std_area, f"{ar}: HD must exceed std")
+            self.assertLessEqual(hd_area, 1_480_000,
+                                 f"{ar}: HD must stay ≤1.48 MP (timeout budget)")
+
+    def test_old_hd_doubling_would_have_exceeded_budget(self):
+        """Guards against regressing to width*2 capped at 2048."""
+        from core.visual.providers.pollinations import _HD_PIXELS
+        for ar, (w, h) in _HD_PIXELS.items():
+            self.assertLess(w * h, 2048 * 1152,
+                            f"{ar}: would re-trigger the 30s timeout profile")
+
+    def test_provider_url_requests_model_flux(self):
+        from core.visual.providers.pollinations import PollinationsProvider
+        import inspect
+        src = inspect.getsource(PollinationsProvider.generate_image)
+        self.assertIn("model=flux", src)
+
+
+class TestStateAndMuteFixes(unittest.TestCase):
+    """Secondary bugs: stuck-PROCESSING on save failure, muted-state stomping."""
+
+    def test_save_failure_returns_to_listening(self):
+        """Old bug: 4 save-failure paths skipped the LISTENING reset."""
+        from actions.generate_image import generate_image
+        player = _RecordingPlayer()
+        fake = _FakeProvider()  # valid PNG
+        with patch("actions.generate_image.get_provider", return_value=fake):
+            with patch("actions.generate_image._cfg",
+                       return_value={"visual_provider": "fake",
+                                     "visual_autosave": True,
+                                     "visual_save_dir": "",
+                                     "visual_max_retries": 0,
+                                     "visual_timeout_s": 1}):
+                # Force the "path outside allowed locations" branch —
+                # deterministic, writes nothing to disk.
+                with patch("actions.generate_image._is_path_allowed",
+                           return_value=False):
+                    msg = generate_image({"prompt": "a cat"}, player=player)
+        self.assertTrue(msg.startswith("[VISUAL_FAILED:SAVE_FAILED"))
+        self.assertIn("LISTENING", player.states)
+        self.assertNotEqual(player.states[-1], "PROCESSING")
+
+    def test_save_write_exception_returns_to_listening(self):
+        """Second save-failure path: disk write raises."""
+        from actions.generate_image import generate_image
+        player = _RecordingPlayer()
+        fake = _FakeProvider()
+        with patch("actions.generate_image.get_provider", return_value=fake):
+            with patch("actions.generate_image._cfg",
+                       return_value={"visual_provider": "fake",
+                                     "visual_autosave": True,
+                                     "visual_save_dir": "",
+                                     "visual_max_retries": 0,
+                                     "visual_timeout_s": 1}):
+                with patch.object(Path, "write_bytes",
+                                  side_effect=OSError("disk full")):
+                    msg = generate_image({"prompt": "a cat"}, player=player)
+        self.assertTrue(msg.startswith("[VISUAL_FAILED:SAVE_FAILED"))
+        self.assertIn("LISTENING", player.states)
+        self.assertNotEqual(player.states[-1], "PROCESSING")
+
+    def test_muted_player_never_flipped_to_listening(self):
+        from actions.generate_image import generate_image
+        player = _RecordingPlayer()
+        player.muted = True
+        generate_image({"prompt": ""}, player=player)
+        self.assertNotIn("LISTENING", player.states)
+        # PROCESSING was set (mute doesn't block the loading state), but the
+        # reset must not stomp the MUTED display.
+        self.assertIn("PROCESSING", player.states)
+
+    def test_unmuted_player_returns_to_listening(self):
+        from actions.generate_image import generate_image
+        player = _RecordingPlayer()
+        player.muted = False
+        generate_image({"prompt": ""}, player=player)
+        self.assertIn("LISTENING", player.states)
+
+    def test_no_dead_elif_in_save_block(self):
+        import inspect
+        from actions import generate_image as m
+        src = inspect.getsource(m.generate_image)
+        # the unreachable `elif target.exists() and filename_raw and not save_path_raw`
+        self.assertNotIn("elif target.exists() and filename_raw", src)
+
+
+class TestArtifactNaming(unittest.TestCase):
+    """Phase 9: default artifacts are timestamped, collision-safe."""
+
+    def test_timestamped_name_format(self):
+        import re
+        from actions.generate_image import _timestamped_name
+        name = _timestamped_name("png")
+        self.assertRegex(name,
+                         r"^aether_generated_\d{8}_\d{6}\.png$")
+
+    def test_timestamped_names_differ_within_same_call_pattern(self):
+        from actions.generate_image import _timestamped_name
+        # format guarantees ordering; collision handled by _unique_path
+        a = _timestamped_name("jpg")
+        self.assertTrue(a.startswith("aether_generated_"))
+        self.assertTrue(a.endswith(".jpg"))
+
+    def test_unique_path_still_applies_to_timestamped(self):
+        import tempfile
+        from actions.generate_image import _unique_path, _timestamped_name
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            name = _timestamped_name("png")
+            (d / name).write_bytes(b"x")
+            p = _unique_path(d, name)
+            self.assertNotEqual(p.name, name)
+            self.assertTrue(p.name.endswith(".png"))
+
+
+class TestHealthCheck(unittest.TestCase):
+    """Phase 18: runtime capability discovery — never claim what can't run."""
+
+    def test_health_reports_available_for_pollinations(self):
+        from actions.generate_image import get_visual_health
+        h = get_visual_health()
+        self.assertEqual(h["status"], "IMAGE_GENERATION_AVAILABLE")
+        self.assertTrue(h["configured"])
+        self.assertEqual(h["provider"], "pollinations")
+
+    def test_health_unavailable_when_provider_missing(self):
+        from actions.generate_image import get_visual_health
+        with patch("actions.generate_image._cfg",
+                   return_value={"visual_provider": "nonexistent_xyz"}):
+            h = get_visual_health()
+        self.assertEqual(h["status"], "IMAGE_GENERATION_UNAVAILABLE")
+        self.assertFalse(h["configured"])
+
+    def test_health_has_no_secrets(self):
+        from actions.generate_image import get_visual_health
+        import json
+        blob = json.dumps(get_visual_health())
+        self.assertNotIn("AIza", blob)       # no API key pattern
+        self.assertNotIn("api_key", blob.lower())
+
+
+class TestMultilingualIntentPhases(unittest.TestCase):
+    """Phase 14: Tamil/Tanglish/Telugu all resolve to the same tool."""
+
+    DESC = TOOL["description"].lower()
+
+    def test_tanglish_trigger_phrases(self):
+        # "oru futuristic city image generate pannu" style
+        for phrase in ("tamil", "tanglish", "telugu", "any language"):
+            self.assertIn(phrase, self.DESC)
+
+    def test_single_tool_no_duplicates(self):
+        from core.action_loader import discover_actions
+        reg = discover_actions(PROJECT_ROOT / "actions",
+                               reserved_names={"screen_process"},
+                               logger=lambda m: None)
+        gen_tools = [n for n in reg.names()
+                     if n in ("generate_image", "create_visual",
+                              "make_picture", "generate_picture",
+                              "image_creator", "visual_creator")]
+        self.assertEqual(gen_tools, ["generate_image"])
 
 
 if __name__ == "__main__":

@@ -467,7 +467,8 @@ DEFAULT_VISUAL_CFG = {
     "visual_default_ar": "1:1",            # default aspect ratio
     "visual_default_quality": "standard",  # standard | hd
     "visual_max_retries": 1,               # bounded retries on transient failure
-    "visual_timeout_s":  30.0,             # per-request timeout
+    "visual_timeout_s":  45.0,             # per-request timeout (30s proved too
+                                           # short for the free tier's HD queue)
 }
 
 
