@@ -11,6 +11,9 @@ import threading
 import time
 from pathlib import Path
 
+# Startup instrumentation (§3.19) — dependency-free, see core/perf.py.
+from core.perf import mark as _perf_mark
+
 import psutil
 
 if platform.system() == "Windows":
@@ -3583,6 +3586,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, face_path: str):
         super().__init__()
+        _perf_mark("ui:mainwindow_start")
         self._face_path = face_path
 
         # Load customization from config
@@ -3611,6 +3615,7 @@ class MainWindow(QMainWindow):
         self.on_voice_change   = None   # callable: () -> None — rebuild session with new voice
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
         self.on_persona_change = None   # callable: (persona_id: str) -> None — switch persona
+        self.on_gesture_engine_needed = None  # callable: () -> engine — lazy build, set by JarvisLive
         self.get_persona_registry = None  # callable: () -> PersonaRegistry — persona state
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
         self.get_plugins       = None   # callable: () -> list[dict], set by JarvisLive
@@ -3767,10 +3772,12 @@ class MainWindow(QMainWindow):
         if not self._ready:
             self._show_setup()
 
-        # Gesture cursor overlay (transparent, sits on top of everything)
-        from core.spatial.gesture_cursor import GestureCursorOverlay
-        self._gesture_cursor = GestureCursorOverlay(self.centralWidget())
-        self._gesture_cursor.hide()
+        # Gesture cursor overlay (transparent, sits on top of everything).
+        # Built on FIRST gesture event via _ensure_gesture_cursor, not here:
+        # importing it pulls the core.spatial package → mediapipe (~2-3 s,
+        # the biggest optional cost in the §3.19 startup benchmark) and
+        # gesture control is off by default.
+        self._gesture_cursor = None
         self._gesture_engine = None  # Set by main.py after JarvisLive init
 
         sc_mute = QShortcut(QKeySequence("F4"), self)
@@ -3779,13 +3786,23 @@ class MainWindow(QMainWindow):
         sc_full.activated.connect(self._toggle_fullscreen)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
+        _perf_mark("ui:mainwindow_done")
 
     # --- Gesture integration -------------------------------------------------
+    def _ensure_gesture_cursor(self):
+        """Build the gesture cursor overlay on first use (§3.19 lazy load)."""
+        if self._gesture_cursor is None:
+            from core.spatial.gesture_cursor import GestureCursorOverlay
+            self._gesture_cursor = GestureCursorOverlay(self.centralWidget())
+            self._gesture_cursor.hide()
+        return self._gesture_cursor
+
     def _on_gesture_event(self, name: str, data) -> None:
         """Slot — handle gesture events from the spatial engine."""
+        cursor = self._ensure_gesture_cursor()
         if name == "pointer_move" and isinstance(data, tuple):
-            self._gesture_cursor.show()
-            self._gesture_cursor.move_to(data[0], data[1])
+            cursor.show()
+            cursor.move_to(data[0], data[1])
         elif name == "state_change":
             state_map = {
                 "TRACKING": "pointer",
@@ -3798,9 +3815,9 @@ class MainWindow(QMainWindow):
                 "INACTIVE": "hidden",
             }
             cursor_state = state_map.get(str(data), "hidden")
-            self._gesture_cursor.set_state(cursor_state)
+            cursor.set_state(cursor_state)
             if cursor_state == "hidden":
-                self._gesture_cursor.hide()
+                cursor.hide()
 
     def _on_gesture_state(self, state: str) -> None:
         """Slot — gesture engine state changed."""
@@ -3808,12 +3825,15 @@ class MainWindow(QMainWindow):
 
     def toggle_gesture_control(self) -> None:
         """Toggle gesture control on/off."""
+        if self._gesture_engine is None and self.on_gesture_engine_needed:
+            self.on_gesture_engine_needed()   # first use builds the engine (lazy)
         if self._gesture_engine is None:
             return
         if self._gesture_engine.is_running:
             self._gesture_engine.stop()
-            self._gesture_cursor.hide()
-            self._gesture_cursor.set_state("hidden")
+            if self._gesture_cursor is not None:
+                self._gesture_cursor.hide()
+                self._gesture_cursor.set_state("hidden")
             self._log.append_log("Gesture control OFF")
         else:
             if self._gesture_engine.start():
@@ -5603,6 +5623,11 @@ class MainWindow(QMainWindow):
             from memory.config_manager import is_gesture_enabled, set_gesture_enabled
             new_val = not is_gesture_enabled()
             set_gesture_enabled(new_val)
+            if new_val and self._gesture_engine is None \
+                    and self.on_gesture_engine_needed:
+                # First enable builds the engine — its import chain (mediapipe)
+                # is deferred to now, see §3.19 lazy loading.
+                self.on_gesture_engine_needed()
             if self._gesture_engine:
                 if new_val:
                     self._gesture_engine.start()
@@ -5610,6 +5635,10 @@ class MainWindow(QMainWindow):
                 else:
                     self._gesture_engine.stop()
                     self.write_log("SYS: Gesture control disabled")
+            elif new_val:
+                self.write_log("ERR: Gesture engine unavailable")
+            else:
+                self.write_log("SYS: Gesture control disabled")
             self._refresh_gesture_btn()
         except Exception as e:
             self.write_log(f"ERR: Gesture toggle failed — {e}")
@@ -6119,6 +6148,7 @@ class JarvisUI:
         self._win = MainWindow(face_path)
         self.root = _RootShim(self._app)
         self._win.show()
+        _perf_mark("ui:ready")
 
     @property
     def muted(self) -> bool:
@@ -6395,6 +6425,15 @@ class JarvisUI:
     def set_gesture_engine(self, engine) -> None:
         """Set the spatial interaction engine reference."""
         self._win._gesture_engine = engine
+
+    @property
+    def on_gesture_engine_needed(self):
+        """Lazy builder: () -> engine, provided by JarvisLive (§3.19)."""
+        return self._win.on_gesture_engine_needed
+
+    @on_gesture_engine_needed.setter
+    def on_gesture_engine_needed(self, cb) -> None:
+        self._win.on_gesture_engine_needed = cb
 
     def toggle_gesture_control(self) -> None:
         """Thread-safe: toggle gesture control on/off."""

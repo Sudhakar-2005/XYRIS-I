@@ -152,9 +152,11 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   references anywhere**. Voice I/O runs through Gemini Live native audio.
 - **Mark-LV:** same files, also unreferenced from main.
 - **Problem:** dead code contradicts "no duplicate architecture".
-- **V3 decision (Phase 22):** either (a) wire them as degraded/offline fallback
-  when Live API is down, or (b) delete. Report recommends (a) — it directly
-  serves error-recovery — but must be an explicit decision before M5.
+- **V3 decision (Phase 22):** ✅ **DECIDED at M5 — keep both files and wire
+  them as degraded/offline fallback when the Live API is down** (option (a),
+  the report's recommendation — it directly serves error-recovery).
+  Implementation deferred: scheduled for a later milestone before RC; both
+  files stay untouched (and unreferenced) until that wiring lands.
   **Files:** `core/stt.py`, `core/tts.py`, `main.py`. **Risk:** low.
 
 ### 3.7 Wake word / PTT / echo guard

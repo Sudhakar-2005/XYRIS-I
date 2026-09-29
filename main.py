@@ -34,6 +34,11 @@ for _stream in ("stdout", "stderr"):
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Startup instrumentation (§3.19): dependency-free stopwatch imported BEFORE
+# the heavy imports it measures. Marks are always recorded; the report prints
+# only with AETHER_PERF=1 (see core/perf.py, tools/bench_startup.py).
+from core.perf import mark as _perf_mark, print_report_if_enabled as _perf_report
+
 import asyncio
 import re
 import threading
@@ -46,9 +51,12 @@ from pathlib import Path
 
 import sounddevice as sd
 import numpy as np
+_perf_mark("import:sounddevice+numpy")
 from google import genai
 from google.genai import types
+_perf_mark("import:google-genai")
 from ui import JarvisUI
+_perf_mark("import:ui")
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     save_session_summary, pop_last_session,
@@ -84,6 +92,7 @@ from core.viseme               import VisemeStream
 from core.wake_word            import (
     WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,
 )
+_perf_mark("import:actions+memory+core")
 
 # How long the assistant stays awake with no user speech before it auto-sleeps
 # again (wake-word mode only).
@@ -100,6 +109,7 @@ PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 # One definition of the Live model string, shared with gemini.py's one-shot
 # side calls — change it in core/model_manager.py only.
 from core.model_manager import LIVE_MODEL
+_perf_mark("imports_done")
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000 
 RECEIVE_SAMPLE_RATE = 24000
@@ -673,6 +683,7 @@ class JarvisLive:
             reserved_names=_inline_names,
             logger=lambda msg: print(f"[Actions] {msg}"),
         )
+        _perf_mark("discover_actions")
 
         # Plugins must not collide with either an inline tool or a discovered action.
         _core_names = _inline_names | self._action_registry.names()
@@ -685,6 +696,7 @@ class JarvisLive:
             logger=lambda msg: print(f"[Plugins] {msg}"),
             notify=lambda msg: self.ui.write_log(f"SYS: {msg}"),
         )
+        _perf_mark("discover_plugins")
         self.ui.get_plugins = self._plugin_registry.list_for_ui
         self.ui.get_plugin_settings = self._plugin_registry.settings_schemas  # ⚙ settings tab
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
@@ -725,8 +737,31 @@ class JarvisLive:
         self.ui.on_wake_install  = self._ui_wake_install  # () -> (ok, msg)
 
         # ── Gesture Control (Spatial Interaction Engine) ─────────────────────
+        # The engine's import chain ends in mediapipe (~2-3 s, the biggest
+        # optional cost in the §3.19 startup benchmark), so it is built on
+        # demand: now only when the setting is already on, otherwise on the
+        # first UI request through _ensure_gesture_engine.
         self._gesture_engine = None
+        self.ui.on_gesture_engine_needed = self._ensure_gesture_engine
         try:
+            from memory.config_manager import get_gesture_settings as _gs
+            if _gs().get("gesture_enabled", False):
+                self._ensure_gesture_engine()
+                self._gesture_engine.start()
+                print("[Spatial] Gesture control enabled")
+        except ImportError as e:
+            print(f"[Spatial] Gesture engine unavailable: {e}")
+        except Exception as e:
+            print(f"[Spatial] Gesture engine init error: {e}")
+        _perf_mark("spatial_init")
+
+    def _ensure_gesture_engine(self):
+        """Build the spatial engine on first need (lazy: mediapipe import).
+
+        Idempotent — every call returns the same engine. Never starts it;
+        boot auto-start and the settings toggle own start().
+        """
+        if self._gesture_engine is None:
             from core.spatial.engine import SpatialInteractionEngine
             from core.spatial.interaction_state import GestureSettings
             from memory.config_manager import get_gesture_settings as _gs
@@ -742,15 +777,7 @@ class JarvisLive:
             self._gesture_engine = SpatialInteractionEngine(_gs_obj)
             self._gesture_engine.on_gesture_event = self._on_gesture_event
             self.ui.set_gesture_engine(self._gesture_engine)
-
-            # Auto-start if previously enabled
-            if _gs_obj.enabled:
-                self._gesture_engine.start()
-                print("[Spatial] Gesture control enabled")
-        except ImportError as e:
-            print(f"[Spatial] Gesture engine unavailable: {e}")
-        except Exception as e:
-            print(f"[Spatial] Gesture engine init error: {e}")
+        return self._gesture_engine
 
     # ── Wake word: state machine ─────────────────────────────────────────────
 
@@ -2625,16 +2652,21 @@ class JarvisLive:
 
 def main():
     ui = JarvisUI("face.png")
+    _perf_mark("ui_constructed")
 
     # Install system tray icon (minimize-to-tray on close)
     def _tray_quit():
         import os as _os
         _os._exit(0)
     ui.start_tray(on_quit=_tray_quit)
+    _perf_mark("tray_started")
 
     def runner():
         ui.wait_for_api_key()
+        _perf_mark("api_key_ready")
         jarvis = JarvisLive(ui)
+        _perf_mark("jarvis_constructed")
+        _perf_report()          # AETHER_PERF=1 → print the startup timeline
         try:
             asyncio.run(jarvis.run())
         except KeyboardInterrupt:
