@@ -91,6 +91,7 @@ from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
 from core.vision_labels        import CAMERA, SCREEN, source_text
 from core.event_bus            import EventBus, Event, EventType, Priority
+from core.degraded             import EndpointDetector, OfflineVoice
 from core.verifier import (
     Verifier, VerificationRule, VerificationStrategy,
     VerificationResult, VerificationStatus,
@@ -769,6 +770,14 @@ class JarvisLive:
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
+
+        # ── M14: degraded offline voice (§3.6) ───────────────────────────
+        # True ⇔ the degraded voice loop is running: the Live API has failed
+        # three times in a row and voice has fallen back to local STT + the
+        # REST ladder + offline TTS. Cleared the moment a session connects.
+        self._degraded          = False
+        self._degraded_failures = 0
+        self._offline           = None   # lazy OfflineVoice, never at startup
 
         self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
         self._tuned_live    = True  # turn-taking / media / thinking knobs; same fallback
@@ -2627,7 +2636,18 @@ class JarvisLive:
                     )
                     self.ui.write_log(f"[Web]: {text}")
                 else:
-                    print(f"[Dashboard] Dropped command (no session): {text}")
+                    # M14 (§3.6): no session — answer over the REST ladder
+                    # instead of dropping the user's words on the floor.
+                    # Fail-soft: with the model down too, _offline_reply
+                    # returns the honest line and the user still hears back.
+                    self.ui.write_log(f"[Web]: {text}")
+                    _loop = asyncio.get_running_loop()
+                    reply = await _loop.run_in_executor(
+                        None, self._offline_reply, text)
+                    if reply:
+                        self.ui.write_log(f"[Offline] {reply}")
+                        await _loop.run_in_executor(
+                            None, self._offline_speak, reply)
             except asyncio.TimeoutError:
                 pass
             except Exception as e:
@@ -2698,6 +2718,159 @@ class JarvisLive:
         self.emit_event(EventType.USER_INTERRUPT, source="dashboard",
                         data={"kind": "emergency_stop"},
                         priority=Priority.CRITICAL)
+
+    # ── M14: degraded offline voice — the Live API down (§3.6) ─────────────
+    # DECIDED at M5, wired at M14: keep core/stt.py + core/tts.py and use them
+    # as the fallback when the session is unreachable. Every step is fail-soft —
+    # the engines are optional installs, so a missing engine degrades the path
+    # again (to text) and says so once instead of failing the whole mode.
+
+    def _offline_engines(self) -> OfflineVoice:
+        """Lazy: Whisper/TTS are constructed on first use, never at startup."""
+        if getattr(self, "_offline", None) is None:
+            self._offline = OfflineVoice(log=self.ui.write_log)
+        return self._offline
+
+    def _offline_transcribe(self, pcm) -> str:
+        try:
+            return self._offline_engines().transcribe(pcm)
+        except Exception:
+            return ""
+
+    def _offline_reply(self, text: str) -> str:
+        """One text turn over the REST model ladder while Live is down.
+        Falls to an honest line when the model is unreachable too, so the
+        user is never met with silence in a mode whose whole point is that
+        something still answers."""
+        try:
+            from core import gemini
+            resp = gemini.call(
+                "You are JARVIS. Answer the user briefly, in their language.\n"
+                f"User: {text}",
+                tier=gemini.FAST,
+            )
+            out = str(getattr(resp, "text", "") or "").strip()
+            if out:
+                return out
+        except Exception:
+            pass
+        return ("I can't reach the Live session or the model right now — "
+                "I'll keep trying to reconnect.")
+
+    def _offline_speak(self, text: str) -> bool:
+        try:
+            return self._offline_engines().speak(text)
+        except Exception:
+            return False
+
+    def note_connection_failure(self) -> bool:
+        """Count a failed attempt at the reconnect tail; three in a row with
+        no session between them engages degraded mode (§3.6). Returns True
+        only on the call that actually engaged it."""
+        self._degraded_failures = getattr(self, "_degraded_failures", 0) + 1
+        if getattr(self, "_degraded", False) or self.session \
+                or self._degraded_failures < 3:
+            return False
+        self._degraded = True
+        self.ui.write_log(
+            "SYS: Degraded mode — live session down, offline voice engaged (§3.6)."
+        )
+        print("[JARVIS] Degraded mode engaged (offline STT/TTS fallback).")
+        self.emit_event(EventType.CUSTOM, source="degraded",
+                        data={"kind": "degraded_start"},
+                        priority=Priority.HIGH)
+        try:
+            asyncio.get_running_loop().create_task(self._degraded_loop())
+        except RuntimeError:
+            pass        # called without a loop (tests) — the flag still stands
+        return True
+
+    def _exit_degraded(self) -> None:
+        """Session is back: drop the flag and the loop closes its own mic
+        within one wait-timeout (0.5 s). Called from run() on connect."""
+        self._degraded_failures = 0
+        if getattr(self, "_degraded", False):
+            self._degraded = False
+            self.ui.write_log("SYS: Live session back — degraded mode ended.")
+            print("[JARVIS] Degraded mode ended (session restored).")
+            self.emit_event(EventType.CUSTOM, source="degraded",
+                            data={"kind": "degraded_end"},
+                            priority=Priority.NORMAL)
+
+    async def _degraded_loop(self) -> None:
+        """Mic → EndpointDetector → Whisper → REST reply → offline TTS, while
+        the Live API is unreachable. Runs until self._degraded drops or a
+        session appears — the mode is a bridge back online, not a second app.
+        Any step failing (no engine, no mic, no model) degrades that step to
+        text and keeps the loop honest rather than dead."""
+        detector = EndpointDetector()
+        frames: asyncio.Queue = asyncio.Queue(maxsize=256)
+        loop = asyncio.get_running_loop()
+
+        def _offer(item):
+            try:
+                frames.put_nowait(item)
+            except asyncio.QueueFull:
+                try:
+                    frames.get_nowait()
+                except Exception:
+                    pass
+                try:
+                    frames.put_nowait(item)
+                except Exception:
+                    pass
+
+        def _callback(indata, _frames, _time, _status):
+            # PortAudio thread → hop onto the loop; never touch an asyncio
+            # queue from a foreign thread, never let a full queue kill audio.
+            try:
+                data = np.asarray(indata, dtype=np.float32).reshape(-1).copy()
+                loop.call_soon_threadsafe(_offer, data)
+            except Exception:
+                pass
+
+        try:
+            stream = sd.InputStream(samplerate=SEND_SAMPLE_RATE, channels=1,
+                                    dtype="float32", callback=_callback)
+            stream.start()
+        except Exception as e:
+            self.ui.write_log(f"ERR: Degraded mode needs a microphone: {e}")
+            self._degraded = False      # flag ⇔ loop running; retry a later round
+            return
+
+        self.ui.write_log("SYS: Degraded listening active — local STT, "
+                          "offline replies, offline TTS.")
+        try:
+            while getattr(self, "_degraded", False) and not self.session:
+                try:
+                    frame = await asyncio.wait_for(frames.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+                utterance = detector.feed(frame)
+                if not utterance:
+                    continue
+                pcm = np.concatenate(utterance)
+                text = await loop.run_in_executor(
+                    None, self._offline_transcribe, pcm)
+                if not text:
+                    continue
+                self.ui.write_log(f"[Offline]: {text}")
+                reply = await loop.run_in_executor(
+                    None, self._offline_reply, text)
+                if reply:
+                    self.ui.write_log(f"[Offline] {reply}")
+                    self.emit_event(EventType.CUSTOM, source="degraded",
+                                    data={"transcript": text[:160],
+                                          "reply": reply[:160]},
+                                    priority=Priority.LOW)
+                    await loop.run_in_executor(None, self._offline_speak, reply)
+        finally:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+            print("[JARVIS] Degraded voice loop ended.")
 
     # ── main loop ───────────────────────────────────────────────────────────
 
@@ -2787,6 +2960,7 @@ class JarvisLive:
                     self._interrupted          = False
 
                     print("[JARVIS] Connected.")
+                    self._exit_degraded()   # M14: any session up ends the offline bridge
                     if _resumed_with:
                         # Say it plainly: the difference between "it reconnected"
                         # and "it reconnected and still knows what we were doing"
@@ -2925,6 +3099,12 @@ class JarvisLive:
 
             if self._dashboard:
                 await self._dashboard.broadcast({"type": "status", "state": "sleeping"})
+
+            # M14: a failed attempt reached the bottom of the loop (real
+            # failure or a session that ended) — three in a row engages the
+            # offline voice bridge (§3.6). `continue` paths above are
+            # deliberate reconnects, not failures, and skip this.
+            self.note_connection_failure()
 
             delay = getattr(self, "_conn_backoff", 3)
             print(f"[JARVIS] Reconnecting in {delay}s...")

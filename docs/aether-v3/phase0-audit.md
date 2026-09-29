@@ -170,6 +170,14 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   Implementation deferred: scheduled for a later milestone before RC; both
   files stay untouched (and unreferenced) until that wiring lands.
   **Files:** `core/stt.py`, `core/tts.py`, `main.py`. **Risk:** low.
+  **✅ M14 — wired:** `core/degraded.py` (model-free `EndpointDetector` +
+  lazy `OfflineVoice`) and `main.py`: three straight connection failures
+  engage a fail-soft voice bridge — mic → local Whisper → REST ladder reply
+  (`gemini.call`) → offline TTS — ended the moment a session reconnects;
+  dashboard text arriving with no session now answers over the REST ladder
+  instead of being dropped. The engines are optional installs: absent ones
+  degrade that step to text and log it exactly once. 19 tests in
+  `tests/test_degraded.py`.
 
 ### 3.7 Wake word / PTT / echo guard
 - **AETHER:** `core/wake_word.py` (wired main.py:84, ui.py:5450, installer
@@ -394,6 +402,9 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   content surface 19, dashboard observability 21, security/confirmation
   audit 13, plus the M2-M6 additions). The row's "900+" floor is cleared
   by a wide margin; every M2-M13 commit was gated on a full green run.
+  **✅ M14 (RC):** final run at the release-candidate tree: **1196 passed,
+  0 failed** (1177 + 19 `tests/test_degraded.py` covering the §3.6 wiring),
+  in 24 s. Every M2-M14 commit gated on a full green run.
 
 ---
 
@@ -419,19 +430,19 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
 | Milestone | Scope | Based on audit |
 |---|---|---|
 | **M1** | **AUDIT** | ✅ this report (checkpoint commit before proceeding) |
-| **M2** | UI core: 13-state machine through existing `_state_sig`; real per-state visuals | §3.2 |
-| **M3** | ModelManager + LiveModelManager wrapping existing `gemini.py` tiers; measured ladder | §3.5 |
-| **M4** | Tool metadata (`risk/timeout/confirm/undo/verify`) + dispatcher enforcement | §3.9, §3.14 |
-| **M5** | Performance: instrument startup; lazy-load wake/camera/spatial/plugins; STT/TTS decision | §3.19, §3.6 |
-| **M6** | Memory/session: keep v1 recall; reconnect-resume hardening | §3.11, §3.8 |
-| **M7** | Vision: source labeling (screen/camera/user/generated/browser) | §3.12 |
-| **M8** | Computer agent: wire `Verifier` observe-verify loops | §3.13 |
-| **M9** | Content surface unification + video mic-mute verification | §3.2, §3.10 |
+| **M2** | UI core: 13-state machine through existing `_state_sig`; real per-state visuals | §3.2 — ✅ (`3ad659d`) |
+| **M3** | ModelManager + LiveModelManager wrapping existing `gemini.py` tiers; measured ladder | §3.5 — ✅ (`a26ae08`) |
+| **M4** | Tool metadata (`risk/timeout/confirm/undo/verify`) + dispatcher enforcement | §3.9, §3.14 — ✅ (`60bfbb8`) |
+| **M5** | Performance: instrument startup; lazy-load wake/camera/spatial/plugins; STT/TTS decision | §3.19, §3.6 — ✅ decision (`69efb40`), wiring in M14 |
+| **M6** | Memory/session: keep v1 recall; reconnect-resume hardening | §3.11, §3.8 — ✅ (`47d82fc`) |
+| **M7** | Vision: source labeling (screen/camera/user/generated/browser) | §3.12 — ✅ (`f1adaf4`) |
+| **M8** | Computer agent: wire `Verifier` observe-verify loops | §3.13 — ✅ (`28d074c`) |
+| **M9** | Content surface unification + video mic-mute verification | §3.2, §3.10 — ✅ (`a05262e`) |
 | **M10** | Visual generation | ✅ shipped (`d93ed1e`) |
-| **M11** | Dashboard: events/health/emergency-stop via event bus | §3.15, §3.16 |
-| **M12** | Security + confirmation coverage audit | §3.14, §3.17 |
-| **M13** | Full regression: 900+ green, perf measured V2-vs-V3 | §3.20 |
-| **M14** | V3 release candidate | — |
+| **M11** | Dashboard: events/health/emergency-stop via event bus | §3.15, §3.16 — ✅ (`6fa10c9`) |
+| **M12** | Security + confirmation coverage audit | §3.14, §3.17 — ✅ (`a363ec7`) |
+| **M13** | Full regression: 900+ green, perf measured V2-vs-V3 | §3.20 — ✅ (`b2001d3`) |
+| **M14** | V3 release candidate | ✅ RC — §3.6 wired, suite 1196 green (this commit) |
 
 Rules enforced by this plan: no rewrites (only wiring + incremental edits),
 checkpoint commit before each milestone (spec Phase 50), tests before/after,
@@ -461,7 +472,14 @@ naming; user-facing strings normalize separately).
 Items already satisfied by V2 (verify, don't rebuild): live theming, content
 panel, confirmation, undo, echo guard, PTT, wake word, visual generation,
 dashboard auth, session summary, recall-shaped memory, plugin system.
-Items genuinely outstanding: state vocabulary, verify-after-act, tool risk
-metadata, wired event bus/observability, ModelManager formalization, measured
-performance, STT/TTS disposition, vision source labels, activity center,
-startup optimization.
+Items outstanding at audit time, now disposed: state vocabulary (✅ M2),
+verify-after-act (✅ M8), tool risk metadata (✅ M4), wired event
+bus/observability (✅ M11), ModelManager formalization (✅ M3), measured
+performance (✅ M13: boot −67%, V2-vs-V3 numbers in
+`docs/aether-v3/bench-v2-vs-v3.txt`), STT/TTS disposition (✅ M14: §3.6
+degraded/offline wiring), vision source labels (✅ M7), startup
+optimization (✅ M5 + M13: measured 1.9 s boot, judged sufficient).
+Genuinely still open after RC, deliberately outside the V3 milestone rows:
+activity center (Phase 32) and permission-metadata enforcement in the
+dispatcher (Phase 40 — the M12 note documents the inventory that exists
+today).
