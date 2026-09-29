@@ -911,6 +911,17 @@ def computer_settings(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_settings",
+    # Mixed tool: most actions are everyday controls, and the genuinely
+    # irreversible ones (restart/shutdown/toggle_wifi) are gated INSIDE the
+    # handler via confirm.request — see _IRREVERSIBLE above. A dispatcher
+    # gate here would put a banner in front of volume changes too, so
+    # requires_confirmation stays False and the handler keeps its finer
+    # judgment. Volume/brightness/dark-mode push undo entries.
+    "risk": "caution",
+    "timeout": 60,
+    "requires_confirmation": False,
+    "supports_undo": True,
+    "verification": "none",
     "description": "Controls the computer: volume, brightness, window management, keyboard shortcuts, typing text on screen, closing apps, fullscreen, dark mode, WiFi, restart, shutdown, scrolling, tab management, zoom, screenshots, lock screen, refresh/reload page. Use for ANY single computer control command. restart, shutdown and toggle_wifi put a confirmation on the user's screen and do NOT happen until they press it — never claim they are done. Volume, brightness and dark mode can be reversed with the `undo` tool.",
     "parameters": {
         "type": "OBJECT",

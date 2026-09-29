@@ -362,6 +362,11 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "flight_finder",
+    "risk": "caution",
+    "timeout": 90,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": "Searches Google Flights and speaks the best options.",
     "parameters": {
         "type": "OBJECT",

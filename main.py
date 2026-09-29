@@ -78,7 +78,7 @@ from core.plugin_loader        import discover_plugins
 from core                      import undo as undo_stack
 from core                      import confirm as confirm_gate
 from core                      import audio_devices
-from core.action_loader        import discover_actions
+from core.action_loader        import discover_actions, ToolPolicy, policy_from_meta
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
 from core.wake_word            import (
@@ -401,7 +401,10 @@ TOOL_DECLARATIONS = [
             "Shuts down the assistant completely. "
             "Call this when the user expresses intent to end the conversation, "
             "close the assistant, say goodbye, or stop Jarvis. "
-            "The user can say this in ANY language."
+            "The user can say this in ANY language. "
+            "Calling this puts a confirmation on the user's screen — the "
+            "assistant does NOT shut down until they press CONFIRM. Say that a "
+            "confirmation is waiting and never claim it is already done."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -491,6 +494,59 @@ TOOL_DECLARATIONS = [
         },
     },
 ]
+
+# ── V3 dispatch metadata for the inline tools ─────────────────────────────────
+# Parallel to TOOL_DECLARATIONS above, deliberately SEPARATE: every declaration
+# in that list goes straight to Gemini as a function_declaration, and these
+# five keys are not valid there. core.action_loader parses the same five keys
+# out of each actions/*.py TOOL dict; this table is their inline twin, and
+# main.py's _tool_policy() reads one or the other for every dispatch.
+# (Plugins get the safe defaults — no entry, no gate.)
+INLINE_TOOL_META: dict[str, dict] = {
+    "system_status": {
+        "risk": "safe", "timeout": 30,
+        "requires_confirmation": False, "supports_undo": False,
+        "verification": "none",
+    },
+    "screen_process": {
+        "risk": "safe", "timeout": 45,
+        "requires_confirmation": False, "supports_undo": False,
+        "verification": "none",
+    },
+    "close_camera": {
+        "risk": "safe", "timeout": 15,
+        "requires_confirmation": False, "supports_undo": False,
+        "verification": "none",
+    },
+    "manage_monitor": {
+        "risk": "safe", "timeout": 30,
+        "requires_confirmation": False, "supports_undo": False,
+        "verification": "none",
+    },
+    # Ends the program: nothing after it can be undone by the assistant, so a
+    # human presses CONFIRM — the same gate computer_settings uses for the
+    # computer's own shutdown/restart.
+    "shutdown_jarvis": {
+        "risk": "dangerous", "timeout": 30,
+        "requires_confirmation": True, "supports_undo": False,
+        "verification": "none",
+    },
+    "save_memory": {
+        "risk": "safe", "timeout": 15,
+        "requires_confirmation": False, "supports_undo": False,
+        "verification": "none",
+    },
+    "recall_memory": {
+        "risk": "safe", "timeout": 15,
+        "requires_confirmation": False, "supports_undo": False,
+        "verification": "none",
+    },
+    "undo": {
+        "risk": "safe", "timeout": 30,
+        "requires_confirmation": False, "supports_undo": False,
+        "verification": "none",
+    },
+}
 
 class _ReconnectSignal(Exception):
     """Raised inside the session TaskGroup to force a clean, voluntary reconnect
@@ -1254,8 +1310,103 @@ class JarvisLive:
         return out
 
     async def _execute_tool(self, fc) -> types.FunctionResponse:
+        """Entry point for every model tool call: resolve the V3 dispatch
+        policy first (Phase 17), then dispatch.
+
+        forbidden → refuse without running anything; gated → park behind
+        core/confirm so a HUMAN presses CONFIRM and the real dispatch runs
+        from the gate's worker thread; otherwise → _dispatch_tool, which
+        enforces the policy's timeout.
+        """
+        name = fc.name
+        policy = self._tool_policy(name)
+
+        if policy.risk == "forbidden":
+            print(f"[Policy] ⛔ {name} — refused (risk=forbidden)")
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return types.FunctionResponse(
+                id=fc.id, name=name,
+                response={"result":
+                          f"I cannot run '{name}' — it is marked forbidden "
+                          f"on this system. Nothing was done."})
+
+        if policy.requires_confirmation:
+            if confirm_gate.pending_title():
+                sentence = ("There is already a confirmation waiting on "
+                            "screen. Ask the user to answer that one first.")
+            else:
+                loop = asyncio.get_event_loop()
+                detail = self._confirm_detail(name)
+
+                def _sync_run():
+                    # core/confirm runs this on its worker thread after a
+                    # human presses CONFIRM. Post the real dispatch back to
+                    # the session loop — the tool belongs there — and wait
+                    # for its result so the gate can log it.
+                    fut = asyncio.run_coroutine_threadsafe(
+                        self._dispatch_tool(fc, policy), loop)
+                    resp = fut.result(timeout=policy.timeout + 15.0)
+                    r = getattr(resp, "response", None)
+                    return str((r or {}).get("result") or "Done.")
+
+                sentence = confirm_gate.request(
+                    key=name,
+                    title=name.replace("_", " ").capitalize(),
+                    detail=detail, run=_sync_run)
+            print(f"[Policy] 🔒 {name} — parked behind the confirmation gate")
+            if not self.ui.muted:
+                self.ui.set_state("LISTENING")
+            return types.FunctionResponse(
+                id=fc.id, name=name, response={"result": sentence})
+
+        return await self._dispatch_tool(fc, policy)
+
+    def _tool_policy(self, name: str) -> ToolPolicy:
+        """Resolve a tool's dispatch policy: the action registry first (its
+        metadata was parsed from the TOOL dict at load), then the inline
+        table for live-session tools, then the safe defaults (plugins and
+        unknown names). Invalid metadata fails CLOSED — an unreadable risk
+        means the gated path, never the open one."""
+        pol = self._action_registry.policy(name) if self._action_registry else None
+        if pol is not None:
+            return pol
+        meta = INLINE_TOOL_META.get(name)
+        if meta is None:
+            return ToolPolicy()
+        pol, err = policy_from_meta(meta)
+        if pol is None:
+            print(f"[Policy] INVALID metadata for '{name}': {err} — failing closed")
+            return ToolPolicy(risk="dangerous", requires_confirmation=True,
+                              timeout=30)
+        return pol
+
+    def _confirm_detail(self, name: str) -> str:
+        """First sentence of the tool's declaration — what the banner shows
+        the human under the title."""
+        desc = ""
+        for d in TOOL_DECLARATIONS:
+            if isinstance(d, dict) and d.get("name") == name:
+                desc = str(d.get("description") or "")
+                break
+        if not desc:
+            desc = self._action_registry.describe(name) if self._action_registry else ""
+        first = desc.split(". ")[0].strip() if desc else ""
+        return first[:160] or name
+
+    async def _dispatch_tool(self, fc, policy: ToolPolicy | None = None) -> types.FunctionResponse:
+        """Run the tool itself — called directly when no gate applies, and
+        from core/confirm's worker thread (via run_coroutine_threadsafe)
+        when one does. The policy was already applied by _execute_tool, so
+        nothing here re-gates: a confirmed run must not ask twice. The
+        policy's timeout guards the action/plugin dispatch paths below;
+        inline branches carry their own waits (vision cooldowns, session
+        hand-offs) and are not double-bounded.
+        """
         name = fc.name
         args = dict(fc.args or {})
+        if policy is None:
+            policy = self._tool_policy(name)
 
         print(f"[JARVIS] 🔧 {name}  {args}")
         # The model has already decided — what follows is execution, not
@@ -1380,7 +1531,14 @@ class JarvisLive:
                     args["file_path"] = self.ui.current_file
                 _ctx = {"player": self.ui, "speak": self.speak,
                         "response": None, "session_memory": None}
-                r = await loop.run_in_executor(None, lambda: self._action_registry.run(name, args, _ctx))
+                # The policy's timeout: a hung handler must not hold the
+                # conversation hostage. The worker thread itself cannot be
+                # killed and will finish (or fail) on its own — the model
+                # gets its turn back either way.
+                r = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None, lambda: self._action_registry.run(name, args, _ctx)),
+                    timeout=policy.timeout)
                 result = r or "Done."
                 # web_search: mirror results to the on-screen content panel
                 if (name == "web_search" and r
@@ -1393,14 +1551,20 @@ class JarvisLive:
 
             else:
                 if self._plugin_registry.has(name):
-                    r = await loop.run_in_executor(
-                        None,
-                        lambda: self._plugin_registry.run(name, args, player=self.ui, session_memory=None)
-                    )
+                    r = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            lambda: self._plugin_registry.run(
+                                name, args, player=self.ui, session_memory=None)),
+                        timeout=policy.timeout)
                     result = r or "Done."
                 else:
                     result = f"Unknown tool: {name}"
 
+        except asyncio.TimeoutError:
+            result = f"Tool '{name}' timed out after {policy.timeout}s."
+            print(f"[JARVIS] ⏱ {name} exceeded its {policy.timeout}s budget")
+            self.speak_error(name, f"timed out after {policy.timeout}s")
         except Exception as e:
             result = f"Tool '{name}' failed: {e}"
             traceback.print_exc()

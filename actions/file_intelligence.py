@@ -498,6 +498,11 @@ def _handle_file_type_stats(params: dict) -> str:
 
 TOOL = {
     "name": "file_intelligence",
+    "risk": "safe",
+    "timeout": 60,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": (
         "Smart file operations beyond basic CRUD. Use this for: "
         "finding duplicate files (by content hash), searching inside files "

@@ -269,7 +269,19 @@ def send_message(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "send_message",
-    "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
+    # A message to another person cannot be taken back — the one thing undo
+    # cannot answer for. The dispatcher parks the call behind the human gate.
+    "risk": "dangerous",
+    "timeout": 60,
+    "requires_confirmation": True,
+    "supports_undo": False,
+    "verification": "none",
+    "description": (
+        "Sends a text message via WhatsApp, Telegram, or other messaging platform. "
+        "Calling this puts a confirmation on the user's screen — the message is "
+        "NOT sent until they press CONFIRM. Tell them a confirmation is waiting "
+        "and never claim the message was sent before that."
+    ),
     "parameters": {
         "type": "OBJECT",
         "properties": {

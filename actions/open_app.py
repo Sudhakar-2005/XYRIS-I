@@ -276,6 +276,11 @@ def open_app(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "open_app",
+    "risk": "safe",
+    "timeout": 30,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": "Opens any application on the computer. Use this whenever the user asks to open, launch, or start any app, website, or program. Always call this tool — never just say you opened it.",
     "parameters": {
         "type": "OBJECT",

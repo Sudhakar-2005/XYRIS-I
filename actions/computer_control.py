@@ -516,6 +516,11 @@ def computer_control(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_control",
+    "risk": "caution",
+    "timeout": 45,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen.",
     "parameters": {
         "type": "OBJECT",

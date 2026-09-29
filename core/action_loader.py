@@ -15,6 +15,10 @@ same one-file operation as writing a plugin: define ``TOOL`` and a handler.
         "handler":      open_app,                # the callable to run
     }
 
+OPTIONALLY, a TOOL may carry five V3 dispatch-metadata keys — risk, timeout,
+requires_confirmation, supports_undo, verification (see ToolPolicy below).
+They are enforced by main.py's dispatcher and are never sent to Gemini.
+
 The handler is invoked through signature introspection: it receives ``parameters``
 plus whichever of ``player`` / ``speak`` / ``response`` / ``session_memory`` it
 actually declares — so existing action signatures work unchanged.
@@ -37,6 +41,86 @@ from typing import Callable, Optional
 _NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 _DEFAULT_PARAMS = {"type": "OBJECT", "properties": {}}
 _CTX_KEYS = ("player", "speak", "response", "session_memory")
+
+
+# ── V3 dispatch metadata (Phase 17) ───────────────────────────────────────────
+# Every TOOL dict may carry five keys alongside name/description/parameters:
+#
+#   risk                  "safe" | "caution" | "dangerous" | "forbidden"
+#                         (the vocabulary of core.tool_registry.Risk, kept as
+#                         plain strings so TOOL dicts stay JSON-shaped)
+#   timeout               seconds the dispatcher will wait for the tool
+#   requires_confirmation True → the dispatcher parks the call behind the
+#                         human CONFIRM/CANCEL gate instead of running it
+#   supports_undo         True → the handler pushes core/undo.py entries
+#   verification          "none" | "self_check" (the tool checks its own
+#                         output — e.g. generate_image re-reads the saved file)
+#
+# These keys are NEVER sent to Gemini: get_tool_declarations() builds the
+# function_declarations itself, so the API schema stays exactly as before and
+# the metadata remains ours to enforce. Enforcement lives in main.py's
+# _execute_tool (forbidden → refuse, gated → confirm gate, timeout → wait_for).
+DEFAULT_TIMEOUT_S = 60
+MIN_TIMEOUT_S = 1
+MAX_TIMEOUT_S = 3600
+RISK_LEVELS = ("safe", "caution", "dangerous", "forbidden")
+VERIFICATION_MODES = ("none", "self_check")
+
+
+@dataclass(frozen=True)
+class ToolPolicy:
+    """Resolved dispatch policy for one tool. Immutable: the dispatcher reads
+    it, never writes it."""
+    risk: str = "safe"
+    timeout: int = DEFAULT_TIMEOUT_S
+    requires_confirmation: bool = False
+    supports_undo: bool = False
+    verification: str = "none"
+
+
+def policy_from_meta(meta: dict | None) -> tuple[Optional[ToolPolicy], str]:
+    """Build a ToolPolicy from a raw metadata dict.
+
+    Missing keys fall back to the defaults (a tool that declares nothing is
+    ordinary and safe). Present-but-invalid values return (None, error) —
+    loud failure at load time, fail-closed at dispatch time. Returns
+    (ToolPolicy, "") for None/empty input.
+    """
+    if not meta:
+        return ToolPolicy(), ""
+    errs = []
+
+    risk = meta.get("risk", "safe")
+    if not isinstance(risk, str) or risk.lower() not in RISK_LEVELS:
+        errs.append(f"risk {risk!r} not one of {RISK_LEVELS}")
+        risk = "safe"
+
+    timeout = meta.get("timeout", DEFAULT_TIMEOUT_S)
+    if isinstance(timeout, bool) or not isinstance(timeout, int) \
+            or not (MIN_TIMEOUT_S <= timeout <= MAX_TIMEOUT_S):
+        errs.append(f"timeout {timeout!r} must be an int in "
+                    f"{MIN_TIMEOUT_S}..{MAX_TIMEOUT_S}")
+        timeout = DEFAULT_TIMEOUT_S
+
+    bools = {}
+    for key in ("requires_confirmation", "supports_undo"):
+        val = meta.get(key, False)
+        if not isinstance(val, bool):
+            errs.append(f"{key} {val!r} must be a bool")
+            val = False
+        bools[key] = val
+
+    verification = meta.get("verification", "none")
+    if not isinstance(verification, str) or verification not in VERIFICATION_MODES:
+        errs.append(f"verification {verification!r} not one of {VERIFICATION_MODES}")
+        verification = "none"
+
+    if errs:
+        return None, "; ".join(errs)
+    return ToolPolicy(risk=risk.lower(), timeout=timeout,
+                      requires_confirmation=bools["requires_confirmation"],
+                      supports_undo=bools["supports_undo"],
+                      verification=verification), ""
 
 
 # A tool may declare that the model should NOT be held up waiting for it.
@@ -65,6 +149,7 @@ class ActionRecord:
     error: str = ""
     behavior: Optional[str] = None     # None = the API's default (blocking)
     scheduling: Optional[str] = None   # None = the API's default (WHEN_IDLE)
+    policy: ToolPolicy = field(default_factory=ToolPolicy)  # V3 dispatch metadata
 
 
 class ActionRegistry:
@@ -91,6 +176,20 @@ class ActionRegistry:
         """How this action's result should re-enter the conversation, if it said."""
         rec = self._actions.get(name)
         return rec.scheduling if rec else None
+
+    def policy(self, name: str) -> Optional[ToolPolicy]:
+        """V3 dispatch policy for `name`, or None when it is not an action."""
+        rec = self._actions.get(name)
+        return rec.policy if rec else None
+
+    def policies(self) -> dict[str, ToolPolicy]:
+        """name → policy for every valid action (coverage tests iterate this)."""
+        return {name: rec.policy for name, rec in self._actions.items()}
+
+    def describe(self, name: str) -> str:
+        """The declaration description — used for the confirm-gate detail."""
+        rec = self._actions.get(name)
+        return rec.description if rec else ""
 
     def names(self) -> set[str]:
         return set(self._actions.keys())
@@ -148,10 +247,16 @@ def _validate(module, filename: str) -> ActionRecord:
         return ActionRecord(name=name, file=filename,
                             error="TOOL['handler'] missing or not callable.")
 
+    policy, perr = policy_from_meta(tool)
+    if policy is None:
+        return ActionRecord(name=name, file=filename,
+                            error=f"TOOL metadata invalid: {perr}.")
+
     return ActionRecord(name=name, description=description.strip(), parameters=parameters,
                         handler=handler, file=filename, valid=True, error="",
                         behavior=_opt_upper(tool.get("behavior"), _BEHAVIORS),
-                        scheduling=_opt_upper(tool.get("scheduling"), _SCHEDULING))
+                        scheduling=_opt_upper(tool.get("scheduling"), _SCHEDULING),
+                        policy=policy)
 
 
 def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,

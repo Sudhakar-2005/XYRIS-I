@@ -571,6 +571,14 @@ _LAST_ERROR: dict = {}
 
 TOOL = {
     "name": "generate_image",
+    # The only tool that currently verifies its own work: bytes are parsed
+    # before display and the saved file is re-read afterwards — the honest
+    # source of the VERIFYING state (M2).
+    "risk": "caution",
+    "timeout": 150,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "self_check",
     "description": (
         "Generate a NEW image from a text prompt — wallpaper, illustration, "
         "concept visual, diagram backdrop, logo concept, sci-fi scene, or any "

@@ -610,6 +610,11 @@ def dev_agent(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "dev_agent",
+    "risk": "caution",
+    "timeout": 600,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, opens VSCode, runs and fixes errors.",
     "parameters": {
         "type": "OBJECT",

@@ -485,6 +485,11 @@ def desktop_control(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "desktop_control",
+    "risk": "caution",
+    "timeout": 90,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": "Controls the desktop: wallpaper, organize, clean, list, stats.",
     "parameters": {
         "type": "OBJECT",

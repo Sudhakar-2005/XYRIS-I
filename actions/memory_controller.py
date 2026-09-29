@@ -100,6 +100,11 @@ def memory_controller(
 
 TOOL = {
     "name": "memory_controller",
+    "risk": "caution",
+    "timeout": 30,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": (
         "Manages short-term and long-term memory with full CRUD operations. "
         "Use action='remember' to store a fact. "

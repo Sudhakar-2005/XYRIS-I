@@ -126,6 +126,11 @@ def _handle_risk_summary() -> str:
 
 TOOL = {
     "name": "safety_action",
+    "risk": "safe",
+    "timeout": 30,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": (
         "Safety intelligence. Use this to check if an action is safe, "
         "view the audit trail of safety-critical actions, check rate "

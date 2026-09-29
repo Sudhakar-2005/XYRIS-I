@@ -54,6 +54,11 @@ def _log(message: str, player=None) -> None:
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "weather_report",
+    "risk": "safe",
+    "timeout": 30,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": "Gives the weather report to user",
     "parameters": {
         "type": "OBJECT",

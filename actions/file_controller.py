@@ -724,6 +724,14 @@ def file_controller(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "file_controller",
+    # delete/move/copy/rename/write all push core/undo.py entries — the undo
+    # philosophy says reversible work runs at once and is answered later,
+    # not parked behind a banner.
+    "risk": "caution",
+    "timeout": 120,
+    "requires_confirmation": False,
+    "supports_undo": True,
+    "verification": "none",
     "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
     "parameters": {
         "type": "OBJECT",

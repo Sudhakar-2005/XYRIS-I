@@ -174,6 +174,11 @@ def _handle_configure(manager, params: dict) -> str:
 
 TOOL = {
     "name": "notification_action",
+    "risk": "safe",
+    "timeout": 30,
+    "requires_confirmation": False,
+    "supports_undo": False,
+    "verification": "none",
     "description": (
         "Notification intelligence. Use this to send notifications, check notification "
         "history, manage unread counts, mark notifications as read, clear history, "
