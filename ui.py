@@ -38,6 +38,13 @@ try:
 except Exception:      # pragma: no cover — HUD must never die over cosmetics
     HoloAvatar = None
 
+try:
+    # V3 state machine: one vocabulary for HUD, avatar and activity log.
+    from core.app_state import WORKING_STATES, transition as _state_transition
+except Exception:      # pragma: no cover — HUD falls back to raw strings
+    WORKING_STATES = frozenset({"THINKING", "PROCESSING"})
+    _state_transition = None
+
 
 def _base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -632,7 +639,7 @@ class HudCanvas(QWidget):
         # either way because the animation state keeps stepping at 60 Hz.
         self._paint_tick = (self._paint_tick + 1) % 6
         active = (self.speaking or amp > 0.02
-                  or self.state in ("THINKING", "PROCESSING"))
+                  or self.state in WORKING_STATES)
         if _blinked or (self._paint_tick % 2 == 0 if active
                         else self._paint_tick % 3 == 0):
             # Nothing is on screen when the window is hidden or minimised, so
@@ -660,16 +667,33 @@ class HudCanvas(QWidget):
     # the core brightens with the voice. Nothing here is decoration that moves
     # for its own sake, which is what made the old glowing orb feel dead.
 
+    def _state_accent(self) -> QColor | None:
+        """State → accent colour, shared by the reactor, the face and the
+        status line so the three layers can never disagree.
+
+        Semantic colours stay fixed across themes (see _HUE_LINKED): errors
+        are always red, waiting/recovery always amber, working always yellow,
+        listening always green. None means "no state accent" — the caller
+        applies its own default, because the reactor and the face deliberately
+        dim differently at rest.
+        """
+        st = self.state
+        if st == "ERROR":
+            return qcol(C.RED)
+        if st in ("WAITING_CONFIRMATION", "RECOVERING"):
+            return qcol(C.ACC)          # orange: attention / re-establishing
+        if st in WORKING_STATES:
+            return qcol(C.ACC2)         # yellow: real work in flight
+        if st == "LISTENING":
+            return qcol(C.GREEN)
+        return None
+
     def _core_colours(self):
         if self.muted:
             return qcol(C.MUTED_C), qcol(C.MUTED_C)
         if self.speaking:
             return qcol(C.PRI), qcol(C.ACC)
-        if self.state in ("THINKING", "PROCESSING"):
-            return qcol(C.PRI), qcol(C.ACC2)
-        if self.state == "LISTENING":
-            return qcol(C.PRI), qcol(C.GREEN)
-        return qcol(C.PRI), qcol(C.PRI_DIM)
+        return qcol(C.PRI), (self._state_accent() or qcol(C.PRI_DIM))
 
     def _paint_core(self, p: QPainter, cx: float, cy: float, r: float,
                     W: float = 0.0, H: float = 0.0):
@@ -762,8 +786,8 @@ class HudCanvas(QWidget):
 
         # 6. Sweeping arcs. Long spans, not dashes — the original's grandeur
         #    came from a few big strokes. Speed is the state: idle drifts,
-        #    thinking hurries, speaking runs.
-        rate = 1.0 + (1.9 if self.state in ("THINKING", "PROCESSING") else 0.0) \
+        #    working hurries, speaking runs.
+        rate = 1.0 + (1.9 if self.state in WORKING_STATES else 0.0) \
                    + (1.2 if self.speaking else 0.0)
         for k, (rr, span, count, dirn, col, a, wid) in enumerate((
                 (0.955, 118, 2, +1, acc,  0.75, 2.0),
@@ -852,12 +876,8 @@ class HudCanvas(QWidget):
                 _main = qcol(C.PRI)
                 if self.speaking:
                     _acc = qcol(C.ACC)
-                elif self.state in ("THINKING", "PROCESSING"):
-                    _acc = qcol(C.ACC2)
-                elif self.state == "LISTENING":
-                    _acc = qcol(C.GREEN)
                 else:
-                    _acc = qcol(C.PRI)
+                    _acc = self._state_accent() or qcol(C.PRI)
             self._avatar.paint(p, cx, _head_cy, _r_head, _main, _acc, qcol(C.BG))
 
         # reactor core — the other centrepiece, and the fallback if the head
@@ -870,24 +890,45 @@ class HudCanvas(QWidget):
             _r = min(W * 0.46, _band_h / 2.0)
             self._paint_core(p, cx, _band_t + _band_h / 2.0, _r, W, _band_h)
 
-        # status text
+        # status text — every V3 state gets a distinct glyph, and the colour
+        # comes from the same _state_accent() the reactor and face use, so the
+        # three layers can never disagree. Blink alternates a glyph pair; it
+        # marks "this state is live", never a fake progress animation.
         sy = _sy_status
         if self.muted:
             txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
         elif self.speaking:
             txt, col = "●  SPEAKING",  qcol(C.ACC)
-        elif self.state == "THINKING":
-            sym = "◈" if self._blink else "◇"
-            txt, col = f"{sym}  THINKING",   qcol(C.ACC2)
-        elif self.state == "PROCESSING":
-            sym = "▷" if self._blink else "▶"
-            txt, col = f"{sym}  PROCESSING", qcol(C.ACC2)
-        elif self.state == "LISTENING":
-            sym = "●" if self._blink else "○"
-            txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
         else:
-            sym = "●" if self._blink else "○"
-            txt, col = f"{sym}  {self.state}", qcol(C.PRI)
+            st = self.state
+            if st == "THINKING":
+                sym = "◈" if self._blink else "◇"
+            elif st == "PROCESSING":          # legacy pre-V3 spelling, still rendered
+                sym = "▷" if self._blink else "▶"
+            elif st == "UNDERSTANDING":
+                sym = "◐" if self._blink else "◑"
+            elif st == "PLANNING":
+                sym = "◆" if self._blink else "◇"
+            elif st == "EXECUTING":
+                sym = "▷" if self._blink else "▶"
+            elif st == "OBSERVING":
+                sym = "◉" if self._blink else "◎"
+            elif st == "VERIFYING":
+                sym = "✔" if self._blink else "✓"     # the verification pulse
+            elif st == "WAITING_CONFIRMATION":
+                sym = "!"                     # steady: a decision is pending
+            elif st == "ERROR":
+                sym = "✕"
+            elif st == "RECOVERING":
+                sym = "↻" if self._blink else "⟳"
+            elif st == "IDLE":
+                sym = "◦" if self._blink else "·"
+            elif st == "LISTENING":
+                sym = "●" if self._blink else "○"
+            else:                                     # SLEEPING, MUTED-as-state…
+                sym = "●" if self._blink else "○"
+            txt  = f"{sym}  {st}"
+            col  = self._state_accent() or qcol(C.PRI)
 
         p.setPen(QPen(col, 1))
         p.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
@@ -5879,11 +5920,16 @@ class MainWindow(QMainWindow):
     # ── Irreversible-action confirmation ─────────────────────────────────────
 
     def _show_confirm_banner(self, title: str, detail: str):
+        # Remember what we were doing so the gate can hand the HUD back to it
+        # when answered (the blocked tool resumes from exactly that state).
+        if getattr(self, "_confirm_overlay", None) is None:
+            self._pre_confirm_state = self.hud.state
         self._hide_confirm_banner()
         ov = ConfirmBanner(title, detail, parent=self.centralWidget())
         ov.answered.connect(self._on_confirm_answered)
         self._centre_overlay(ov)
         self._confirm_overlay = ov
+        self._apply_state("WAITING_CONFIRMATION")
 
     def _hide_confirm_banner(self):
         ov = getattr(self, "_confirm_overlay", None)
@@ -5891,6 +5937,11 @@ class MainWindow(QMainWindow):
             ov.hide()
             ov.deleteLater()
             self._confirm_overlay = None
+            pre = getattr(self, "_pre_confirm_state", None)
+            self._pre_confirm_state = None
+            # Only restore if nothing else has moved the state along meanwhile.
+            if pre and self.hud.state == "WAITING_CONFIRMATION":
+                self._apply_state(pre)
 
     def _on_confirm_answered(self, accepted: bool):
         # Tear the banner down first: core.confirm.resolve() may be about to
@@ -6004,6 +6055,15 @@ class MainWindow(QMainWindow):
             threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
 
     def _apply_state(self, state: str):
+        # Single sink for every state change (facade signals and direct calls
+        # alike): normalise through the V3 state machine, then paint. Legacy
+        # aliases such as "PROCESSING" become "EXECUTING" here — no caller
+        # outside this seam needs to know about the vocabulary change.
+        if _state_transition is not None:
+            try:
+                state = _state_transition(state, source="ui")
+            except Exception:
+                pass
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
 

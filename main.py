@@ -964,6 +964,10 @@ class JarvisLive:
             self._on_persona_change(_persona_id)
             return
 
+        # Typed input skips transcription but not understanding.
+        if not self.ui.muted:
+            self.ui.set_state("UNDERSTANDING")
+
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"role": "user", "parts": [{"text": text}]},
@@ -1075,6 +1079,8 @@ class JarvisLive:
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
+        if not self.ui.muted:
+            self.ui.set_state("ERROR")
         self.speak(f"Sir, {tool_name} encountered an error. {short}")
 
     def _build_config(self) -> types.LiveConnectConfig:
@@ -1250,7 +1256,11 @@ class JarvisLive:
         args = dict(fc.args or {})
 
         print(f"[JARVIS] 🔧 {name}  {args}")
-        self.ui.set_state("THINKING")
+        # The model has already decided — what follows is execution, not
+        # thinking. VERIFYING is emitted later, only by tools that really
+        # check their own output.
+        if not self.ui.muted:
+            self.ui.set_state("EXECUTING")
 
 
         if name == "save_memory":
@@ -1640,6 +1650,11 @@ class JarvisLive:
 
                         if sc.output_transcription and sc.output_transcription.text:
                             txt = _clean_transcript(sc.output_transcription.text)
+                            # First words of a response: the model is composing
+                            # its answer — a real THINKING moment, until audio
+                            # or a tool call takes over the state.
+                            if txt and not out_buf and not self.ui.muted:
+                                self.ui.set_state("THINKING")
                             # A turn that involves a tool call passes through
                             # several turn_completes, and the API re-sends the
                             # tail of the transcript across them. Comparing only
@@ -1677,6 +1692,12 @@ class JarvisLive:
                             full_in = " ".join(in_buf).strip()
                             if full_in:
                                 self._last_out_logged = ""   # new exchange
+                                # The user has finished — the utterance is in
+                                # hand and being understood. Real event, not a
+                                # timer: THINKING follows when the answer
+                                # starts arriving, SPEAKING when it is voiced.
+                                if not self.ui.muted:
+                                    self.ui.set_state("UNDERSTANDING")
                                 self.ui.write_log(f"You: {full_in}")
                                 self._session_log.append(f"User: {full_in}")
                                 if self._dashboard:
@@ -2241,10 +2262,17 @@ class JarvisLive:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
+        _connect_n = 0
         while True:
             try:
+                _connect_n += 1
                 print("[JARVIS] Connecting...")
-                self.ui.set_state("THINKING")
+                # Honest states: the first connection is app start-up; any
+                # later one means a dropped session is being re-established.
+                if _connect_n > 1 or self._resume_handle is not None:
+                    self.ui.set_state("RECOVERING")
+                else:
+                    self.ui.set_state("INITIALISING")
                 _resumed_with = self._resume_handle is not None
                 config = self._build_config()
 

@@ -410,6 +410,11 @@ def generate_image(
 
     # ── Verify received bytes (Phase 7) ────────────────────────────────────
     _evt("VISUAL_VERIFICATION_STARTED", id=result.generation_id)
+    if player:
+        try:
+            player.set_state("VERIFYING")   # V3: real check in progress
+        except Exception:
+            pass
     image_bytes = result.raw_meta.get("image_bytes") or b""
     ok, mime, w, h = _verify_image_bytes(image_bytes)
     if not ok:
@@ -479,6 +484,11 @@ def generate_image(
             _ui_error(player, f"SAVE_FAILED: {e}")
             return f"[VISUAL_FAILED:SAVE_FAILED] Image generated but saving failed: {e}"
 
+        if player:
+            try:
+                player.set_state("VERIFYING")   # V3: post-save check in progress
+            except Exception:
+                pass
         if not _verify_saved_file(target):
             _ui_reset_state(player)
             _ui_error(player, "VERIFICATION_FAILED: saved file failed post-save check.")

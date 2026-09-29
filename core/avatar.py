@@ -33,6 +33,7 @@ from PyQt6.QtCore import QLineF, QPointF, QRectF, Qt
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF, QRadialGradient
 
 from core.avatar_mesh import JAW_MAX, JAW_PIVOT, get_head_mesh
+from core.app_state import WORKING_STATES
 
 # Perspective camera distance in head-half-heights. Large enough that the nose
 # does not balloon, small enough to keep a sense of depth.
@@ -337,8 +338,13 @@ class HoloAvatar:
         self._brow += (max(-0.4, min(1.2, brow_t)) - self._brow) * 0.20
 
         # ── what the state does to the face ─────────────────────────────────
+        # The V3 working states (understanding → thinking → executing →
+        # verifying, plus recovering) all mean "the answer is not ready yet",
+        # so the face looks away for all of them; PROCESSING is the legacy
+        # spelling kept for safety. Every branch below is driven by a real
+        # state transition — the face never animates on a timer of its own.
         st = (state or "").upper()
-        thinking = st in ("THINKING", "PROCESSING")
+        thinking = st in WORKING_STATES or st == "PROCESSING"
         asleep = st in ("SLEEPING", "STANDBY", "OFFLINE")
 
         if thinking:
@@ -352,11 +358,23 @@ class HoloAvatar:
         elif asleep:
             self._bias_tgt = [0.0, -0.25]
             brow_bias, lid_tgt = -0.05, 0.22
+        elif st == "ERROR":
+            # Restrained concern: eyes stay on the user, brow drops. No panic
+            # expression — an error the assistant reports calmly reads as
+            # controlled, which is exactly the impression it should give.
+            self._bias_tgt = [0.0, 0.12]
+            brow_bias, lid_tgt = -0.18, 0.85
         else:
-            # LISTENING / idle / speaking: eyes come back to the user.
+            # LISTENING / idle / speaking / awaiting confirmation: eyes come
+            # back to the user — attention is the whole point of those states.
             self._bias_tgt = [0.0, 0.0]
             self._bias_at = 0.0
-            brow_bias = 0.10 if st == "LISTENING" else 0.0
+            if st == "LISTENING":
+                brow_bias = 0.10
+            elif st == "WAITING_CONFIRMATION":
+                brow_bias = 0.18      # raised brows: a question is waiting
+            else:
+                brow_bias = 0.0
             lid_tgt = 1.0
 
         for i in (0, 1):
