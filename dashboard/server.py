@@ -595,6 +595,17 @@ class DashboardServer:
             from fastapi.responses import RedirectResponse
             return RedirectResponse(_CRYPTOJS_CDN)
 
+        @app.get("/manifest.webmanifest")
+        async def serve_manifest():
+            return FileResponse(str(STATIC_DIR / "manifest.webmanifest"),
+                                media_type="application/manifest+json")
+
+        @app.get("/sw.js")
+        async def serve_service_worker():
+            return FileResponse(str(STATIC_DIR / "sw.js"),
+                                media_type="application/javascript",
+                                headers={"Cache-Control": "no-cache"})
+
         @app.get("/login", response_class=HTMLResponse)
         async def login_page():
             return HTMLResponse(self._login_html)
