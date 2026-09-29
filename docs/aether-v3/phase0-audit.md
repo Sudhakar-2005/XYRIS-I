@@ -109,6 +109,18 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   UI extraction only — never a rewrite. **Files:** `main.py`, `ui.py`,
   new `core/voice_state.py` (small). **Risk:** HIGH (100+ state refs in ui.py).
   **Test:** state-transition unit tests + manual HUD smoke per milestone.
+  **✅ M9:** the content surface is now one route — `_surface_content` in
+  `main.py` is the only path from a tool result to `ContentPanel`
+  (web_search keeps its mode/query label; declared content actions surface
+  reference-shaped results past a length floor; failure-shaped results never
+  appear as content; plugins included per §3.10; the call runs before the M8
+  verification note is appended, so the panel shows the tool's answer, not
+  the model's verdict; a panel crash never breaks dispatch). The mute path
+  is likewise one named call — `_pc_mic_blocked` gates every PC-mic frame
+  (`ui.muted` or `_phone_active` → reason string), replacing the old inline
+  condition. 19 tests in `tests/test_content_surface.py`, incl. source
+  guards that the old inline mute condition is gone and that the phone
+  relay keeps its own muted check.
 
 ### 3.3 Avatar & lip sync
 - **AETHER:** `core/avatar.py` (35 KB `HoloAvatar`) + `avatar_mesh.py` +
@@ -200,6 +212,11 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   enable/disable UI (ui.py:2318), config save (3246). Mark-LV: none.
 - **V3:** Phase 18 — lightweight discovery (metadata without importing plugin
   code), `importlib` lazy load (10 lazy-import sites already exist). **Risk:** low.
+  **✅ M9:** plugin results reach the shared content surface on the same
+  rule as actions — ≥120 chars surfaces with the plugin name as the label,
+  anything shorter stays in the voice; the routing goes through the single
+  `_surface_content` choke (shared with §3.2), so adding a content plugin
+  needs no new special case.
 
 ### 3.11 Memory
 - **AETHER:** `memory/memory_manager.py` is already **recall-shaped**:

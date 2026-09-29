@@ -617,6 +617,28 @@ def _register_verifier_rules(registry, verifier=None) -> int:
     return count
 
 
+# ── M9: one content surface (§3.2) ───────────────────────────────────────────
+# ContentPanel has existed since v1, but only web_search and the news briefing
+# ever fed it — every other reference-shaped result (reports, lists, summaries)
+# lived and died in the spoken transcript. These declare which actions' results
+# belong on screen; _surface_content() is the single route there: actions,
+# plugins (§3.10) and the web_search special case all pass through it.
+_CONTENT_SURFACE: dict[str, str] = {
+    "youtube_video":     "YOUTUBE",
+    "flight_finder":     "FLIGHTS",
+    "code_helper":       "CODE",
+    "dev_agent":         "DEV",
+    "file_processor":    "FILE",
+    "file_intelligence": "FILE",
+}
+# Spoken-scale results ("Opened X.", one-line answers) stay in the voice.
+_CONTENT_MIN_CHARS = 120
+# Failure-shaped results are never put on screen as if they were content.
+_CONTENT_SKIP = ("No results", "Search failed", "Unknown", "Tool '",
+                 "Could not", "Browser error", "I cannot run",
+                 "not available")
+
+
 class _ReconnectSignal(Exception):
     """Raised inside the session TaskGroup to force a clean, voluntary reconnect
     (e.g. the user picked a new voice — the voice is fixed at connect time, so
@@ -1675,14 +1697,10 @@ class JarvisLive:
                         None, lambda: self._action_registry.run(name, args, _ctx)),
                     timeout=policy.timeout)
                 result = r or "Done."
-                # web_search: mirror results to the on-screen content panel
-                if (name == "web_search" and r
-                        and not r.startswith("No results")
-                        and not r.startswith("Search failed")):
-                    _mode  = args.get("mode", "search")
-                    _query = args.get("query") or ", ".join(args.get("items", []))
-                    _label = f"{_mode.upper()} — {_query[:38]}" if _query else _mode.upper()
-                    self.ui.show_content(_label, r)
+                # M9: one content surface — the panel, not a per-tool
+                # special case. Runs before the M8 note is appended, so the
+                # user reads the tool's own answer, not the model's verdict.
+                self._surface_content(name, args, r)
 
             else:
                 if self._plugin_registry.has(name):
@@ -1693,6 +1711,7 @@ class JarvisLive:
                                 name, args, player=self.ui, session_memory=None)),
                         timeout=policy.timeout)
                     result = r or "Done."
+                    self._surface_content(name, args, r)
                 else:
                     result = f"Unknown tool: {name}"
 
@@ -1759,6 +1778,40 @@ class JarvisLive:
               f"(confidence {vres.confidence:.2f}) — {vres.message}")
         return f"{result}{verification_note(vres)}"
 
+    def _surface_content(self, name: str, args: dict, result) -> None:
+        """M9: the single route from a tool result to the content panel.
+
+        web_search keeps its mode/query label exactly as before; declared
+        actions and plugins surface only reference-shaped results (the
+        length floor keeps "Opened X." in the voice where it belongs).
+        Called BEFORE the M8 verification note is appended: what the user
+        reads is the tool's own answer — the verdict is the model's
+        contract, not theirs. A display failure never breaks dispatch.
+        """
+        if not result:
+            return
+        text = str(result)
+        if text.startswith(_CONTENT_SKIP):
+            return
+        if name == "web_search":
+            mode  = args.get("mode", "search")
+            query = args.get("query") or ", ".join(args.get("items", []))
+            label = f"{mode.upper()} — {query[:38]}" if query else mode.upper()
+        elif name in _CONTENT_SURFACE:
+            if len(text) < _CONTENT_MIN_CHARS:
+                return
+            label = _CONTENT_SURFACE[name]
+        elif self._plugin_registry.has(name):
+            if len(text) < _CONTENT_MIN_CHARS:
+                return
+            label = name.upper().replace("_", " ")
+        else:
+            return
+        try:
+            self.ui.show_content(label, text)
+        except Exception:
+            pass
+
     async def _send_realtime(self):
         while True:
             msg = await self.out_queue.get()
@@ -1773,6 +1826,22 @@ class JarvisLive:
                     mime_type=msg.get("mime_type", "audio/pcm"),
                 )
             )
+
+    def _pc_mic_blocked(self) -> str:
+        """M9: why the PC microphone must not stream right now ("" = it may).
+
+        The mute path in one named, testable place instead of an inline
+        condition nobody could assert: `ui.muted` (the user hit mute — video
+        playing, a private moment) and `_phone_active` (the phone relay owns
+        the mic) both silence the PC mic before a byte is queued. Returns
+        the reason, so a test can say WHY the mic was held, not only that
+        something was.
+        """
+        if self.ui.muted:
+            return "muted"
+        if self._phone_active:
+            return "phone"
+        return ""
 
     async def _listen_audio(self):
         print("[JARVIS] 🎤 Mic started")
@@ -1847,7 +1916,9 @@ class JarvisLive:
             if self._ptt_enabled and not self._ptt_held:
                 return
 
-            if not self.ui.muted and not self._phone_active:
+            # M9: the send decision itself is one named call — muted or
+            # phone-owned, and not one byte leaves the mic.
+            if not self._pc_mic_blocked():
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
