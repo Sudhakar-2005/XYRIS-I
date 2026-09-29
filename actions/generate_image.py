@@ -596,7 +596,9 @@ TOOL = {
         "analyzing a picture/screenshot, finding an image online, or camera/"
         "screen vision — those are different tasks. On success the result is "
         "verified; on failure it returns an explicit failure code — never claim "
-        "an image exists unless the result says [VISUAL_OK]."
+        "an image exists unless the result says [VISUAL_OK]. If the user "
+        "later asks you to look at a file you generated, read it with "
+        "file_processor and pass source='generated_image'."
     ),
     "parameters": {
         "type": "OBJECT",

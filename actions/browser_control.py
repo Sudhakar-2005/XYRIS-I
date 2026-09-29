@@ -1118,7 +1118,7 @@ TOOL = {
             },
             "path": {
                 "type": "STRING",
-                "description": "Save path for screenshot"
+                "description": "Save path for screenshot. When reading this file back with file_processor, pass source='browser'."
             },
             "incognito": {
                 "type": "BOOLEAN",

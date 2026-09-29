@@ -227,6 +227,17 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   explicitly labeled at the perception boundary (Phase 29).
 - **V3:** add source tagging in one choke point; keep spatial engine as-is.
   **Risk:** medium. **Test:** source-label unit tests.
+  **✅ M7:** one module now owns the vocabulary — `core/vision_labels.py`
+  defines the five sources and their labels (unknown source raises). The only
+  two image send points route through it: main session
+  `_flush_pending_vision` via `source_text`, side calls via
+  `gemini.call(..., source=...)` which labels before the ladder (covers Live
+  and REST). `file_processor` defaults to `user_image` and accepts a
+  model-supplied `source` (junk falls back honestly); screen side-calls
+  (`code_helper`, `computer_control`) pass `source="screen"`; browser and
+  generated read-backs are hinted in the tool descriptions; `[SELF]` explains
+  all five labels. 35 tests in `tests/test_vision_labels.py`, including choke
+  guards that fail if any label is spelled outside the module.
 
 ### 3.13 Computer / browser control & verification
 - **AETHER & Mark-LV:** identical pyautogui-based actions (AETHER supersets).

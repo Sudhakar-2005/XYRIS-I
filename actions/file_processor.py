@@ -27,6 +27,7 @@ from datetime import datetime
 
 # Model choice, timeout and fallback ladder all live in core/gemini.py.
 from core import gemini
+from core import vision_labels
 
 def _get_api_key() -> str:
     config_path = Path(__file__).resolve().parent.parent / "config" / "api_keys.json"
@@ -34,12 +35,16 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
-def _gemini_client(tier: str = gemini.SMART):
+def _gemini_client(tier: str = gemini.SMART,
+                   source: str = vision_labels.USER_IMAGE):
     """Summarising documents and reading images — the reasoning tier, with a
-    long deadline because the input can be a whole file."""
+    long deadline because the input can be a whole file. ``source`` labels
+    image halves on the way out (§3.12); the default is the truth for every
+    caller here — the user handed the file over."""
     class _W:
         def generate_content(self, contents):
-            resp = gemini.call(contents, tier=tier, timeout_ms=90000)
+            resp = gemini.call(contents, tier=tier, timeout_ms=90000,
+                               source=source)
             if resp is None:
                 raise RuntimeError("every Gemini model on the ladder failed")
             return resp
@@ -95,7 +100,13 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
 
     if action in ("describe", "ocr", "analyze", "read", "extract_text"):
         try:
-            model  = _gemini_client()
+            # The model may say where the image came from (§3.12); anything
+            # not in the vocabulary falls back to the honest default — the
+            # user handed this file over.
+            _src   = params.get("source")
+            source = (_src if _src in vision_labels.SOURCES
+                      else vision_labels.USER_IMAGE)
+            model  = _gemini_client(source=source)
             img    = Image.open(path)
             prompt = {
                 "describe": "Describe this image in detail.",
@@ -867,6 +878,10 @@ TOOL = {
             "instruction": {
                 "type": "STRING",
                 "description": "Free-form instruction if action doesn't cover it. E.g. 'translate this to Turkish', 'find all email addresses'"
+            },
+            "source": {
+                "type": "STRING",
+                "description": "Where an image file came from, for honest labelling. One of: screen (a screen capture), camera (a webcam photo), user_image (a file the user provided - the default), generated_image (JARVIS made it earlier), browser (a screenshot of a webpage). Optional; only affects how the image is labelled for you."
             },
             "format": {
                 "type": "STRING",

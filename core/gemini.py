@@ -90,6 +90,7 @@ from core.model_manager import (       # noqa: F401 — re-exported API
     MODEL_MANAGER,
     LIVE_MANAGER,
 )
+from core.vision_labels import with_source_label
 
 # A rung that means "ask the Live model instead", through a short throwaway
 # session rather than the REST text API.
@@ -316,15 +317,21 @@ def _live_call(contents, config, timeout_ms: int, key: str):
 
 
 def call(contents, tier: str = FAST, config=None,
-         timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = ""):
+         timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = "",
+         source: str | None = None):
     """Run one generation, walking the ladder until one answers.
 
     Returns the SDK's own response object, so callers that need more than the
-    text — grounding metadata, candidates, usage — still get it. Returns None
+    text - grounding metadata, candidates, usage - still get it. Returns None
     when every model on the ladder failed; the reason for each is printed, since
     a silent None during a session nobody can debug is how the original problem
     stayed hidden.
+
+    ``source`` is a vision source from ``core.vision_labels``: when given and
+    the contents carry image pixels, its label is inserted ahead of them, on
+    both send paths, so the model knows what it is looking at (§3.12).
     """
+    contents = with_source_label(contents, source)
     # `tier` is normally FAST or SMART. Anything else is taken to be an explicit
     # model name — screen_agent lets the user pick one in its settings — and it
     # is tried first, with the reasoning ladder behind it. So a user's choice is

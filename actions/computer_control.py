@@ -337,7 +337,7 @@ def _screen_find(description: str) -> tuple[int, int] | None:
         from core import gemini
         response = gemini.call(
             [gtypes.Part.from_bytes(data=image_bytes, mime_type="image/png"), prompt],
-            tier=gemini.FAST, timeout_ms=20_000,
+            tier=gemini.FAST, timeout_ms=20_000, source="screen",
         )
         if response is None:
             return None

@@ -89,6 +89,7 @@ from core                      import audio_devices
 from core.action_loader        import discover_actions, ToolPolicy, policy_from_meta
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
+from core.vision_labels        import CAMERA, SCREEN, source_text
 from core.wake_word            import (
     WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,
 )
@@ -1826,16 +1827,16 @@ class JarvisLive:
         b64 = _b64.b64encode(img_b).decode("ascii")
         print(f"[Vision] 📤 {len(img_b):,} bytes (angle={angle}) → main session")
 
-        # Label the source. Without it the image arrives carrying nothing but
-        # the user's own sentence, and a screenshot of this app — which has a
-        # face in the middle of it — got read as a photo of the user. What the
-        # label *means* is explained once, in the generated [SELF] block.
-        src = ("[IMAGE SOURCE: WEBCAM]" if angle == "camera"
-               else "[IMAGE SOURCE: SCREEN CAPTURE]")
+        # Label the source through the one choke point (core.vision_labels).
+        # Without it the image arrives carrying nothing but the user's own
+        # sentence, and a screenshot of this app - which has a face in the
+        # middle of it - got read as a photo of the user. What each label
+        # *means* is explained once, in the generated [SELF] block.
+        src = source_text(CAMERA if angle == "camera" else SCREEN, question)
         await self.session.send_client_content(
             turns={"role": "user", "parts": [
                 {"inline_data": {"mime_type": mime_t, "data": b64}},
-                {"text": f"{src}\n\n{question}"},
+                {"text": src},
             ]},
             turn_complete=True,
         )

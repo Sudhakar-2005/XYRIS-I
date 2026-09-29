@@ -489,7 +489,8 @@ Be specific and actionable. If you see an error message, quote it exactly."""
             analysis_prompt,
         ]
 
-        response = gemini.call(contents, tier=gemini.SMART, timeout_ms=45_000)
+        response = gemini.call(contents, tier=gemini.SMART, timeout_ms=45_000,
+                               source="screen")
         if response is None:
             return "Sir, I couldn't reach Gemini to analyse that screenshot."
 
