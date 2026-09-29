@@ -1,0 +1,24 @@
+Forward Deployment Engineer Road Map
+
+1. Foundations:
+   - Python programming (advanced)
+   - Linux basics & Scripting
+   - Git (Version Control)
+
+2. Cloud & Infrastructure:
+   - Cloud Platforms (AWS/Azure/GCP)
+   - Networking basics
+
+3. AI/ML Core:
+   - Machine Learning Concepts
+   - Neural Networks & Deep Learning
+   - NLP/CV focus area
+
+4. Deployment & Operations:
+   - Docker (Containerization)
+   - Kubernetes (Orchestration)
+   - CI/CD pipelines
+
+5. Soft Skills & Client Facing:
+   - Project Management
+   - Communication & Problem Solving
