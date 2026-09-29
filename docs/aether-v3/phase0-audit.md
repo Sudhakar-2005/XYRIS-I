@@ -366,6 +366,21 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   camera init, dashboard start.
 - **V3:** Phase 37/14/15 — instrument first, then lazy-load optional systems.
   Never optimize by guess. **Risk:** low. **Test:** startup benchmark script.
+  **✅ M13:** measured, V2 (`51f264a`) vs V3 (this tree), same machine/venv,
+  `tools/bench_startup.py` run against a detached V2 worktree (bench +
+  `core/perf.py` copied in; single-run wall clock, so treat as order-of-
+  magnitude, not microbenchmark). Cold import cost (ms, V2 → V3):
+  `main` 4034 → 997, `ui` 920 → 249, `google.genai` 1969 → 633,
+  `actions.screen_processor` 692 → 208, `numpy` 330 → 110, `sounddevice`
+  561 → 376, `memory.memory_manager` 107 → 12, `core.plugin_loader`
+  158 → 27 (`core.spatial.engine` is a V3 addition: n/a → 840).
+  Boot timeline (JarvisUI + JarvisLive, offscreen): **V2 5704 ms →
+  V3 1910 ms (−67%)**, with V2's ui construction alone at 3786 ms vs
+  V3's 1114 ms. Probes: wake first-touch 0 ms both; V2 had no camera
+  probe at all (n/a = function absent, not broken) vs V3 1464 ms; spatial
+  construct fails on this machine's mediapipe both as n/a in V3
+  (`'HandTracker' object has no attribute '_hands'` — pre-existing,
+  environment-level). Full outputs: `docs/aether-v3/bench-v2-vs-v3.txt`.
 
 ### 3.20 Testing (baseline)
 - **900 tests pass today** (`pytest tests/ -q`), incl. 50 visual tests and
@@ -374,6 +389,11 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   it is pre-tested**, which makes wiring it low-risk.
 - Mark-LV: zero tests.
 - **V3:** every milestone = full suite green + new tests for the milestone.
+  **✅ M13:** full regression run at the M12 tree: **1177 passed, 0 failed**
+  (baseline 900 + the milestone suites: vision labels 35, verifier wiring 43,
+  content surface 19, dashboard observability 21, security/confirmation
+  audit 13, plus the M2-M6 additions). The row's "900+" floor is cleared
+  by a wide margin; every M2-M13 commit was gated on a full green run.
 
 ---
 

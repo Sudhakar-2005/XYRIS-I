@@ -1,0 +1,149 @@
+﻿AETHER-I V2 vs V3 startup benchmark (M13, audit §3.19)
+Method: tools/bench_startup.py, same machine + venv, single-run wall clock.
+V3 = this tree; V2 = detached worktree at 51f264a with tools/bench_startup.py
+and core/perf.py copied in (neither exists at the V2 baseline).
+
+=== V3 (measured at M12 tree) ===
+== cold import cost (full) ==
+  ui                               249.0 ms
+  sounddevice                      376.0 ms
+  numpy                            110.0 ms
+  google.genai                     633.0 ms
+  core.wake_word                     9.0 ms
+  core.plugin_loader                27.0 ms
+  core.action_loader                22.0 ms
+  actions.screen_processor         208.0 ms
+  actions.system_monitor            71.0 ms
+  core.spatial.engine              840.0 ms
+  memory.memory_manager             12.0 ms
+  main                             997.0 ms
+
+== boot phase timeline (JarvisUI + JarvisLive, offscreen) ==
+  [Actions] Action loaded: browser_control (browser_control.py)
+  [Actions] Action loaded: code_helper (code_helper.py)
+  [Actions] Action loaded: computer_control (computer_control.py)
+  [Actions] Action loaded: computer_settings (computer_settings.py)
+  [Actions] Action loaded: desktop_control (desktop.py)
+  [Actions] Action loaded: dev_agent (dev_agent.py)
+  [Actions] Action loaded: file_controller (file_controller.py)
+  [Actions] Action loaded: file_intelligence (file_intelligence.py)
+  [Actions] Action loaded: file_processor (file_processor.py)
+  [Actions] Action loaded: flight_finder (flight_finder.py)
+  [Actions] Action loaded: game_updater (game_updater.py)
+  [Actions] Action loaded: generate_image (generate_image.py)
+  [Actions] Action loaded: memory_controller (memory_controller.py)
+  [Actions] Action loaded: notification_action (notification_action.py)
+  [Actions] Action loaded: open_app (open_app.py)
+  [Actions] Action loaded: reminder (reminder.py)
+  [Actions] Action loaded: safety_action (safety_action.py)
+  [Actions] Action loaded: send_message (send_message.py)
+  [Actions] Action loaded: weather_report (weather_report.py)
+  [Actions] Action loaded: web_search (web_search.py)
+  [Actions] Action loaded: youtube_video (youtube_video.py)
+  [Actions] Action discovery complete: 21 active.
+  [Verify] 3 verification rule(s) registered
+  [Plugins] Plugin loaded: calendar (calendar.py)
+  [Plugins] Plugin loaded: gmail (gmail.py)
+  [Plugins] Plugin loaded: quiz (quiz.py)
+  [Plugins] Plugin discovery complete: 3 active, 0 rejected, 3 total.
+  [Spatial] Gesture engine init error: module 'mediapipe' has no attribute 'solutions'
+  [perf] startup timeline (since main.py import):
+  [perf]   bench_start                 +     0.0 ms  (total      0.0 ms)
+  [perf]   import:sounddevice+numpy    +   251.0 ms  (total    251.0 ms)
+  [perf]   import:google-genai         +   531.9 ms  (total    782.9 ms)
+  [perf]   import:ui                   +    80.8 ms  (total    863.7 ms)
+  [perf]   import:actions+memory+core  +   152.1 ms  (total   1015.8 ms)
+  [perf]   imports_done                +     1.0 ms  (total   1016.8 ms)
+  [perf]   ui:mainwindow_start         +    14.1 ms  (total   1030.8 ms)
+  [perf]   ui:mainwindow_done          +    77.6 ms  (total   1108.4 ms)
+  [perf]   ui:ready                    +     5.9 ms  (total   1114.3 ms)
+  [perf]   ui_constructed              +     0.0 ms  (total   1114.3 ms)
+  [perf]   discover_actions            +   258.1 ms  (total   1372.4 ms)
+  [perf]   discover_plugins            +    10.9 ms  (total   1383.3 ms)
+  [perf]   spatial_init                +   527.0 ms  (total   1910.3 ms)
+  [perf]   jarvis_constructed          +     0.0 ms  (total   1910.3 ms)
+
+== lazy subsystem first-touch probes ==
+  wake_detector_first_touch          0.0 ms
+  camera_frame_grab               1464.0 ms
+  spatial_engine_construct           n/a   (AttributeError: 'HandTracker' object has no attribute '_hands')
+
+
+=== V2 (51f264a) ===
+D:\MarkLIV-venv\Scripts\python.exe : Exception in thread Thread-29 (_readerthread):
+At line:1 char:1
++ D:\MarkLIV-venv\Scripts\python.exe tools\bench_startup.py 2>&1 | Out- ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Exception in th..._readerthread)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Traceback (most recent call last):
+  File "C:\Program 
+Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\threading.py", line 1045, in 
+_bootstrap_inner
+    self.run()
+  File "C:\Program 
+Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\threading.py", line 982, in 
+run
+    self._target(*self._args, **self._kwargs)
+  File "C:\Program 
+Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\subprocess.py", line 1599, 
+in _readerthread
+    buffer.append(fh.read())
+                  ^^^^^^^^^
+  File "C:\Program 
+Files\WindowsApps\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\Lib\encodings\cp1252.py", line 
+23, in decode
+    return codecs.charmap_decode(input,self.errors,decoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeDecodeError: 'charmap' codec can't decode byte 0x8d in position 12: character maps to <undefined>
+== cold import cost (full) ==
+  ui                               920.0 ms
+  sounddevice                      561.0 ms
+  numpy                            330.0 ms
+  google.genai                    1969.0 ms
+  core.wake_word                    80.0 ms
+  core.plugin_loader               158.0 ms
+  core.action_loader                99.0 ms
+  actions.screen_processor         692.0 ms
+  actions.system_monitor           215.0 ms
+  core.spatial.engine                n/a   (ModuleNotFoundError: No module named 'core.spatial')
+  memory.memory_manager            107.0 ms
+  main                            4034.0 ms
+
+== boot phase timeline (JarvisUI + JarvisLive, offscreen) ==
+  [Actions] Action loaded: browser_control (browser_control.py)
+  [Actions] Action loaded: code_helper (code_helper.py)
+  [Actions] Action loaded: computer_control (computer_control.py)
+  [Actions] Action loaded: computer_settings (computer_settings.py)
+  [Actions] Action loaded: desktop_control (desktop.py)
+  [Actions] Action loaded: dev_agent (dev_agent.py)
+  [Actions] Action loaded: file_controller (file_controller.py)
+  [Actions] Action loaded: file_intelligence (file_intelligence.py)
+  [Actions] Action loaded: file_processor (file_processor.py)
+  [Actions] Action loaded: flight_finder (flight_finder.py)
+  [Actions] Action loaded: game_updater (game_updater.py)
+  [Actions] Action loaded: memory_controller (memory_controller.py)
+  [Actions] Action loaded: notification_action (notification_action.py)
+  [Actions] Action loaded: open_app (open_app.py)
+  [Actions] Action loaded: reminder (reminder.py)
+  [Actions] Action loaded: safety_action (safety_action.py)
+  [Actions] Action loaded: send_message (send_message.py)
+  [Actions] Action loaded: weather_report (weather_report.py)
+  [Actions] Action loaded: web_search (web_search.py)
+  [Actions] Action loaded: youtube_video (youtube_video.py)
+  [Actions] Action discovery complete: 20 active.
+  [Plugins] Plugin loaded: calendar (calendar.py)
+  [Plugins] Plugin loaded: gmail (gmail.py)
+  [Plugins] Plugin loaded: quiz (quiz.py)
+  [Plugins] Plugin discovery complete: 3 active, 0 rejected, 3 total.
+  [perf] startup timeline (since main.py import):
+  [perf]   bench_start         +     0.0 ms  (total      0.0 ms)
+  [perf]   ui_constructed      +  3786.0 ms  (total   3786.0 ms)
+  [perf]   jarvis_constructed  +  1918.3 ms  (total   5704.2 ms)
+
+== lazy subsystem first-touch probes ==
+  wake_detector_first_touch          0.0 ms
+  camera_frame_grab                  n/a
+  spatial_engine_construct           n/a   (ModuleNotFoundError: No module named 'core.spatial')
+
