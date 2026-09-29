@@ -16,6 +16,7 @@ import secrets
 import socket
 import string
 import time
+from collections import deque
 from pathlib import Path
 
 _DEPS_OK = False
@@ -468,6 +469,12 @@ class DashboardServer:
         self._pending_keys: dict[str, float] = {}
         self._device_sessions: dict[str, dict] = {}  # device_token → {session_key}
         self._phone_audio_queue: asyncio.Queue    = asyncio.Queue(maxsize=200)
+        # M11 observability surface (§3.15/§3.16): a bounded event ring for
+        # GET /api/events plus the two runtime callbacks (status, emergency).
+        self._event_history: deque[dict] = deque(maxlen=200)
+        self._status_callback            = None
+        self._emergency_callback         = None
+        self._started_at                 = time.time()
         self._uploads_dir                 = UPLOADS_DIR
         self._login_html                  = _read("login.html")
         self._app_html                    = _read("app.html")
@@ -519,12 +526,27 @@ class DashboardServer:
     def set_connect_callback(self, fn) -> None:
         self._connect_callback = fn
 
+    def set_status_callback(self, fn) -> None:
+        """M11: runtime health provider behind GET /api/status."""
+        self._status_callback = fn
+
+    def set_emergency_callback(self, fn) -> None:
+        """M11: runtime handler behind POST /api/emergency-stop."""
+        self._emergency_callback = fn
+
+    def push_event(self, event: dict) -> None:
+        """M11: event-bus bridge target — feeds the /api/events ring."""
+        self._event_history.append(event)
+
     # ── broadcast ────────────────────────────────────────────────────────
 
-    async def broadcast(self, msg: dict) -> None:
-        self._history.append(msg)
-        if len(self._history) > 300:
-            self._history = self._history[-300:]
+    async def broadcast(self, msg: dict, *, history: bool = True) -> None:
+        # history=False lets hot event streams reach live clients without
+        # evicting the chat replay buffer (M11).
+        if history:
+            self._history.append(msg)
+            if len(self._history) > 300:
+                self._history = self._history[-300:]
         dead: set[WebSocket] = set()
         for ws in list(self._clients):
             try:
@@ -532,6 +554,28 @@ class DashboardServer:
             except Exception:
                 dead.add(ws)
         self._clients -= dead
+
+    # ── health snapshot (M11) ────────────────────────────────────────────
+
+    def _status_snapshot(self) -> dict:
+        """Server liveness + the runtime's own health, fail-soft either side."""
+        if self._status_callback:
+            try:
+                runtime = self._status_callback() or {}
+            except Exception as e:
+                runtime = {"status_error": str(e)}
+        else:
+            runtime = {}
+        return {
+            "ok": True,
+            "server": {
+                "uptime_s": int(time.time() - self._started_at),
+                "clients": len(self._clients),
+                "authenticated_tokens": len(self._tokens),
+                "events_buffered": len(self._event_history),
+            },
+            "runtime": runtime,
+        }
 
     # ── FastAPI app ───────────────────────────────────────────────────────
 
@@ -794,6 +838,38 @@ class DashboardServer:
             except Exception:
                 pass
             return JSONResponse({"files": files})
+
+        # ── M11: observability surface (§3.15/§3.16) — every route
+        # auth-gated: no unauthenticated OS control, ever.
+
+        @app.get("/api/status")
+        async def status_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            return JSONResponse(self._status_snapshot())
+
+        @app.get("/api/events")
+        async def events_ep(req: Request):
+            """Recent event-bus stream (oldest first, bounded). Live push
+            rides the existing /ws as {"type": "event"} messages."""
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            return JSONResponse({"events": list(self._event_history)})
+
+        @app.post("/api/emergency-stop")
+        async def emergency_stop_ep(req: Request):
+            if not _auth(req):
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            if not self._emergency_callback:
+                return JSONResponse(
+                    {"ok": False, "error": "no runtime attached"},
+                    status_code=503)
+            try:
+                self._emergency_callback()
+            except Exception as e:
+                return JSONResponse({"ok": False, "error": str(e)},
+                                    status_code=500)
+            return JSONResponse({"ok": True})
 
         @app.get("/uploads/{filename}")
         async def download_file(filename: str, token: str = ""):

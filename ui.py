@@ -6160,6 +6160,12 @@ class JarvisUI:
             self._win._toggle_mute()
 
     @property
+    def state(self) -> str:
+        """The state the HUD is actually painting — read back for health
+        endpoints (M11), same delegation pattern as `muted` above."""
+        return self._win.hud.state
+
+    @property
     def current_file(self) -> str | None:
         return self._win._drop_zone.current_file()
 

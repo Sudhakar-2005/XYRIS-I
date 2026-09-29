@@ -90,6 +90,7 @@ from core.action_loader        import discover_actions, ToolPolicy, policy_from_
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
 from core.vision_labels        import CAMERA, SCREEN, source_text
+from core.event_bus            import EventBus, Event, EventType, Priority
 from core.verifier import (
     Verifier, VerificationRule, VerificationStrategy,
     VerificationResult, VerificationStatus,
@@ -762,6 +763,7 @@ class JarvisLive:
         self._resume_handle: str | None = None
         self._turn_done_event: asyncio.Event | None = None
         self._dashboard     = None
+        self._event_bus     = EventBus()      # M11: started in run(), not here
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
@@ -1732,6 +1734,15 @@ class JarvisLive:
         if not _failed and policy.verification == "verifier":
             result = await self._run_verification(name, args, result)
 
+        # M11: the bus hears every turn of the wheel — success and failure
+        # alike feed the dashboard stream (§3.15); the prints stay as-is.
+        self.emit_event(
+            EventType.TOOL_ERROR if _failed else EventType.TOOL_RESULT,
+            source=name,
+            data={"ok": not _failed, "result": str(result)[:200]},
+            priority=Priority.HIGH,
+        )
+
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
 
@@ -2623,6 +2634,71 @@ class JarvisLive:
                 print(f"[Dashboard] Command error: {e}")
                 await asyncio.sleep(0.5)
 
+    # ── M11: observability — event bus + dashboard surface (§3.15/§3.16) ──
+
+    def emit_event(self, event_type: EventType, *, source: str = "jarvis",
+                   data: dict | None = None,
+                   priority: Priority = Priority.NORMAL) -> bool:
+        """Fire-and-forget onto the wired bus. Never raises and never blocks:
+        observability must not be able to break the thing it observes. When
+        the bus isn't running (early startup, tests built via __new__) the
+        event is dropped the way a full queue drops it — and the print()
+        logging beside it keeps working regardless (§3.15 shim)."""
+        bus = getattr(self, "_event_bus", None)
+        if bus is None or not bus.stats.get("running"):
+            return False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        evt = Event(priority=priority, event_type=event_type,
+                    source=source, data=data or {})
+        loop.create_task(bus.publish(evt))
+        return True
+
+    async def _bridge_event(self, event: Event) -> None:
+        """The bus' one subscriber: every event to both dashboard surfaces —
+        the /api/events ring (snapshot) and live /ws clients (push). No
+        dashboard attached is the normal state in tests, never an error."""
+        dash = getattr(self, "_dashboard", None)
+        if not dash:
+            return
+        try:
+            payload = event.to_dict()
+            dash.push_event(payload)
+            await dash.broadcast({"type": "event", "event": payload},
+                                 history=False)
+        except Exception:
+            pass
+
+    def _dashboard_status(self) -> dict:
+        """The runtime's own health, read live for GET /api/status."""
+        return {
+            "state": self.ui.state,
+            "session": bool(self.session),
+            "muted": bool(self.ui.muted),
+            "phone_active": bool(self._phone_active),
+            "event_bus": dict(self._event_bus.stats),
+        }
+
+    def emergency_stop(self) -> None:
+        """Dashboard emergency-stop (§3.16): mute the mic and flush pending
+        input so not one more byte reaches the model. Idempotent (the muted
+        setter is a no-op when already muted) and never raises — it arrives
+        over HTTP, often with a phone in the user's hand. Audio already in
+        the speaker keeps playing; the *input* path is what stops here."""
+        self.ui.muted = True                     # real toggle: state + style + log
+        q = self.audio_in_queue
+        if q is not None:
+            try:
+                while True:
+                    q.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        self.emit_event(EventType.USER_INTERRUPT, source="dashboard",
+                        data={"kind": "emergency_stop"},
+                        priority=Priority.CRITICAL)
+
     # ── main loop ───────────────────────────────────────────────────────────
 
     async def run(self):
@@ -2654,12 +2730,22 @@ class JarvisLive:
             from dashboard.server import DashboardServer
             self._dashboard = DashboardServer()
             self._dashboard.set_connect_callback(self._on_phone_connected)
+            self._dashboard.set_status_callback(self._dashboard_status)
+            self._dashboard.set_emergency_callback(self.emergency_stop)
             asyncio.create_task(self._dashboard.serve())
             # Runs for the whole lifetime, not just inside an active session
             asyncio.create_task(self._process_dashboard_commands())
         except Exception as e:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
+
+        # M11: the event bus, finally wired (§3.15) — started before any
+        # emission point so early events queue instead of dropping, with one
+        # bridge subscriber feeding the dashboard stream. The print() shim
+        # stays exactly where it was; the bus rides alongside it.
+        await self._event_bus.start()
+        self._event_bus.subscribe_all(self._bridge_event)
+        self.emit_event(EventType.SYSTEM_STARTUP, source="main")
 
         _connect_n = 0
         while True:

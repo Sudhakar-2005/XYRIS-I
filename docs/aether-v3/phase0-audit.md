@@ -298,12 +298,30 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   compatibility shim, expose stream to dashboard + activity center (Phase 32).
   **Files:** `core/event_bus.py`, `main.py` (bind once), HUD consumers.
   **Risk:** medium. **Test:** event-emission assertions in existing tests.
+  **✅ M11:** the bus is wired — `JarvisLive.__init__` constructs it, `run()`
+  starts it before any emission point and subscribes one bridge;
+  `emit_event()` is fire-and-forget (never raises/blocks; drops when the bus
+  isn't running, including `__new__`-built test fakes) and every `print()`
+  stays exactly where it was. Emissions: SYSTEM_STARTUP at boot,
+  TOOL_RESULT/TOOL_ERROR from every `_dispatch_tool` turn, CRITICAL
+  USER_INTERRUPT from dashboard emergency-stop. The bridge feeds both
+  dashboard surfaces — the bounded `/api/events` ring and live `/ws` push
+  (`broadcast(..., history=False)` so hot events never evict the chat
+  replay buffer). 21 tests in `tests/test_dashboard_observability.py`.
 
 ### 3.16 Dashboard
 - **AETHER:** Bearer-token auth with per-token session keys, encrypted token
   storage, login page (dashboard/server.py:460-543). Strong.
 - **V3:** expose status/health/events/emergency-stop (Phase 34) — never
   unauthenticated OS control. **Risk:** low-medium (security surface).
+  **✅ M11:** three auth-gated routes — `GET /api/status` (server liveness +
+  runtime health via a fail-soft status callback: state/session/muted/phone/
+  bus stats), `GET /api/events` (the 200-deep event ring; live push rides
+  the existing `/ws`), `POST /api/emergency-stop` (mutes the mic through the
+  real toggle and flushes `audio_in_queue` so not one more byte reaches the
+  model; idempotent, never raises, 503 when no runtime is attached).
+  The §3.16 guarantee is under test: an unauthenticated client gets 401 on
+  all three and the emergency callback is never invoked.
 
 ### 3.17 Security
 - `config/api_keys.json` present on disk and **untracked** (verify `.gitignore`
