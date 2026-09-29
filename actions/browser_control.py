@@ -12,6 +12,8 @@ import webbrowser
 from pathlib import Path
 from typing import Optional
 
+from core.verifier import VerificationResult, VerificationStatus
+
 from playwright.async_api import (
     async_playwright,
     BrowserContext,
@@ -1060,6 +1062,77 @@ def _log(player, text: str):
         player.write_log(f"[browser] {short[:60]}")
 
 
+# ── M8 post-action verification (audit §3.13) ─────────────────────────────────
+_BLANK_URLS = ("", "about:blank", "chrome://newtab/", "edge://newtab/",
+               "firefox://newtab/", "about:blank#blocked")
+
+
+def verify_browser(args, output):
+    """Post-dispatch probe (M8): did the URL actually load?
+
+    The one question about a browser that CAN be answered: read the page's
+    real URL back. With an automation session attached that is a direct
+    check; a native open hands the URL to the user's own browser, which no
+    API can look inside, so it reports PARTIAL — handed over, not confirmed.
+    Interactive actions (click, type, ...) have no DOM check implemented yet
+    and say so instead of guessing.
+    """
+    action = str((args or {}).get("action") or "").lower().strip()
+    out = str(output or "")
+    if out.startswith(("Browser error", "Could not start", "Unknown")) \
+            or "timed out" in out:
+        return VerificationResult(
+            status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+            message="the handler itself reported no successful action")
+    if action not in ("go_to", "search", "new_tab"):
+        return VerificationResult(
+            status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+            message=f"'{action or 'action'}' leaves no observable "
+                    f"post-state (DOM checks are not implemented)")
+
+    browser = str((args or {}).get("browser") or "").lower().strip() or None
+    if _registry.has(browser):
+        # Same condition the handler used, so a native open is never chased
+        # through a session (and get() must not be called when has() is
+        # False: get() would create the session it is supposed to observe).
+        try:
+            sess = _registry.get(browser)
+            url = str(sess.run(sess.get_url(), timeout=5) or "").strip()
+        except Exception as e:
+            return VerificationResult(
+                status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+                message=f"could not read the page URL: {e}")
+        if url.lower() in _BLANK_URLS:
+            return VerificationResult(
+                status=VerificationStatus.FAILED, confidence=0.8,
+                message=f"the page is blank ({url or 'no URL'}) — "
+                        f"nothing loaded")
+        expected = str((args or {}).get("url") or "").strip()
+        if action == "go_to" and expected \
+                and _normalize_url(url) == _normalize_url(expected):
+            return VerificationResult(
+                status=VerificationStatus.VERIFIED, confidence=0.95,
+                message=f"URL loaded: {url}")
+        return VerificationResult(
+            status=VerificationStatus.VERIFIED, confidence=0.7,
+            message=f"page is loaded at: {url}")
+
+    noted = str(getattr(_registry, "_last_native_url", "") or "")
+    if noted:
+        return VerificationResult(
+            status=VerificationStatus.PARTIAL, confidence=0.4,
+            message=f"handed to the default browser: {noted} — a native "
+                    f"open cannot be confirmed from here")
+    if out.startswith("Opened"):
+        return VerificationResult(
+            status=VerificationStatus.PARTIAL, confidence=0.3,
+            message="handed to the default browser — a native open "
+                    "cannot be confirmed from here")
+    return VerificationResult(
+        status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+        message="no navigation record to check")
+
+
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "browser_control",
@@ -1067,7 +1140,7 @@ TOOL = {
     "timeout": 120,
     "requires_confirmation": False,
     "supports_undo": False,
-    "verification": "none",
+    "verification": "verifier",
     "description": "Controls any web browser. Use for: opening websites, searching the web, clicking elements, filling forms, scrolling, screenshots, navigation, any web-based task. Simple open/search requests launch the user's own browser normally (their real profile and logged-in accounts); interactive actions (click, type, fill_form...) attach an automation browser. Always pass the 'browser' parameter when the user specifies a browser (e.g. 'open in Edge', 'use Firefox', 'open Chrome'). Multiple browsers can run simultaneously.",
     "parameters": {
         "type": "OBJECT",
@@ -1134,4 +1207,5 @@ TOOL = {
         ]
     },
     "handler": browser_control,
+    "verify": verify_browser,
 }

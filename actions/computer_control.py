@@ -15,6 +15,8 @@ import time
 import random
 from pathlib import Path
 
+from core.verifier import VerificationResult, VerificationStatus
+
 try:
     import pyautogui
     pyautogui.FAILSAFE = True
@@ -513,6 +515,83 @@ def computer_control(
         return f"computer_control '{action}' failed: {e}"
 
 
+# ── M8 post-action verification (audit §3.13) ─────────────────────────────────
+def _screenshot_path_from(output: str) -> str | None:
+    m = re.search(r"Screenshot saved:\s*(.+)$", str(output or "").strip())
+    return m.group(1).strip() if m else None
+
+
+def _window_probe(title: str) -> tuple[bool, bool]:
+    """(window found, it is frontmost) — the real window check behind
+    verify_control; tests patch this, never pygetwindow."""
+    import pygetwindow as gw
+    matches = [w for w in gw.getWindowsWithTitle(title)
+               if str(getattr(w, "title", "")).strip()]
+    if not matches:
+        needle = title.lower()
+        matches = [w for w in gw.getAllWindows()
+                   if needle in str(getattr(w, "title", "")).lower()]
+    if not matches:
+        return False, False
+    return True, any(getattr(w, "isActive", False) for w in matches)
+
+
+def verify_control(args, output):
+    """Post-dispatch probe (M8): only what can honestly be observed.
+
+    A screenshot can be checked — the file must really exist. A focused
+    window can be checked — pygetwindow must really see it. Everything else
+    (clicks, keystrokes, scrolling) has no reliable post-state to read, so
+    it says exactly that instead of rubber-stamping the action.
+    """
+    action = str((args or {}).get("action") or "").lower().strip()
+    out = str(output or "")
+    if out.startswith("computer_control") and "failed" in out:
+        return VerificationResult(
+            status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+            message="the handler itself reported failure")
+
+    if action == "screenshot":
+        path = _screenshot_path_from(out)
+        if not path:
+            return VerificationResult(
+                status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+                message="no saved path in the result to check")
+        if Path(path).is_file():
+            return VerificationResult(
+                status=VerificationStatus.VERIFIED, confidence=0.95,
+                message=f"screenshot file exists: {path}")
+        return VerificationResult(
+            status=VerificationStatus.FAILED, confidence=0.9,
+            message=f"screenshot file not found: {path}")
+
+    if action == "focus_window":
+        title = str((args or {}).get("title") or "")
+        if not title:
+            return VerificationResult(
+                status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+                message="no window title to check")
+        try:
+            found, active = _window_probe(title)
+        except Exception as e:
+            return VerificationResult(
+                status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+                message=f"window probe failed: {e}")
+        if found:
+            state = " and frontmost" if active else ""
+            return VerificationResult(
+                status=VerificationStatus.VERIFIED, confidence=0.8,
+                message=f"window matching '{title}' exists{state}")
+        return VerificationResult(
+            status=VerificationStatus.FAILED, confidence=0.7,
+            message=f"no window matches '{title}'")
+
+    return VerificationResult(
+        status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+        message=f"'{action or 'action'}' leaves no observable post-state "
+                f"to check")
+
+
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "computer_control",
@@ -520,7 +599,7 @@ TOOL = {
     "timeout": 45,
     "requires_confirmation": False,
     "supports_undo": False,
-    "verification": "none",
+    "verification": "verifier",
     "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen.",
     "parameters": {
         "type": "OBJECT",
@@ -591,4 +670,5 @@ TOOL = {
         ]
     },
     "handler": computer_control,
+    "verify": verify_control,
 }

@@ -55,6 +55,9 @@ _CTX_KEYS = ("player", "speak", "response", "session_memory")
 #   supports_undo         True → the handler pushes core/undo.py entries
 #   verification          "none" | "self_check" (the tool checks its own
 #                         output — e.g. generate_image re-reads the saved file)
+#                         | "verifier" (core/verifier.py runs the TOOL's own
+#                         callable `verify` after dispatch — M8; declaring this
+#                         mode REQUIRES a `verify` key, and vice versa)
 #
 # These keys are NEVER sent to Gemini: get_tool_declarations() builds the
 # function_declarations itself, so the API schema stays exactly as before and
@@ -64,7 +67,7 @@ DEFAULT_TIMEOUT_S = 60
 MIN_TIMEOUT_S = 1
 MAX_TIMEOUT_S = 3600
 RISK_LEVELS = ("safe", "caution", "dangerous", "forbidden")
-VERIFICATION_MODES = ("none", "self_check")
+VERIFICATION_MODES = ("none", "self_check", "verifier")
 
 
 @dataclass(frozen=True)
@@ -150,6 +153,7 @@ class ActionRecord:
     behavior: Optional[str] = None     # None = the API's default (blocking)
     scheduling: Optional[str] = None   # None = the API's default (WHEN_IDLE)
     policy: ToolPolicy = field(default_factory=ToolPolicy)  # V3 dispatch metadata
+    verify_fn: Optional[Callable] = None  # M8: post-dispatch probe (§3.13)
 
 
 class ActionRegistry:
@@ -181,6 +185,13 @@ class ActionRegistry:
         """V3 dispatch policy for `name`, or None when it is not an action."""
         rec = self._actions.get(name)
         return rec.policy if rec else None
+
+    def verify_fn(self, name: str) -> Optional[Callable]:
+        """M8: the post-dispatch probe for `name`, or None when the action
+        declares no verification (main.py registers the callable with
+        core/verifier.py; the declaration itself never carries it)."""
+        rec = self._actions.get(name)
+        return rec.verify_fn if rec else None
 
     def policies(self) -> dict[str, ToolPolicy]:
         """name → policy for every valid action (coverage tests iterate this)."""
@@ -252,11 +263,28 @@ def _validate(module, filename: str) -> ActionRecord:
         return ActionRecord(name=name, file=filename,
                             error=f"TOOL metadata invalid: {perr}.")
 
+    # M8: the verifier mode and the probe callable must agree — a declared
+    # mode with nothing to run, or a probe nobody will call, is a silent hole
+    # in exactly the place the audit says never to have one.
+    verify_fn = tool.get("verify")
+    if verify_fn is not None and not callable(verify_fn):
+        return ActionRecord(name=name, file=filename,
+                            error="TOOL['verify'] must be callable.")
+    if policy.verification == "verifier" and verify_fn is None:
+        return ActionRecord(name=name, file=filename,
+                            error="TOOL declares verification='verifier' "
+                                  "but has no callable 'verify'.")
+    if verify_fn is not None and policy.verification != "verifier":
+        return ActionRecord(name=name, file=filename,
+                            error=f"TOOL provides 'verify' but "
+                                  f"verification={policy.verification!r} — "
+                                  f"set verification='verifier'.")
+
     return ActionRecord(name=name, description=description.strip(), parameters=parameters,
                         handler=handler, file=filename, valid=True, error="",
                         behavior=_opt_upper(tool.get("behavior"), _BEHAVIORS),
                         scheduling=_opt_upper(tool.get("scheduling"), _SCHEDULING),
-                        policy=policy)
+                        policy=policy, verify_fn=verify_fn)
 
 
 def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,

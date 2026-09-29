@@ -451,8 +451,11 @@ class TestSourceGuards(unittest.TestCase):
         i = self.src.index("async def _dispatch_tool")
         j = self.src.index("async def _send_realtime")
         body = self.src[i:j]
-        self.assertEqual(body.count("asyncio.wait_for"), 2)
-        self.assertIn("timeout=policy.timeout", body)
+        # Two dispatch timeouts (the action run and the plugin run); the
+        # third asyncio.wait_for in this slice is M8's verification-probe
+        # bound (VERIFY_TIMEOUT_S), which must stay bounded too.
+        self.assertEqual(body.count("timeout=policy.timeout"), 2)
+        self.assertEqual(body.count("asyncio.wait_for"), 3)
         self.assertIn("except asyncio.TimeoutError", body)
 
     def test_inline_meta_is_never_in_tool_declarations(self):

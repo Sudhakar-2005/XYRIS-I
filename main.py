@@ -90,6 +90,10 @@ from core.action_loader        import discover_actions, ToolPolicy, policy_from_
 from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
 from core.vision_labels        import CAMERA, SCREEN, source_text
+from core.verifier import (
+    Verifier, VerificationRule, VerificationStrategy,
+    VerificationResult, VerificationStatus,
+)
 from core.wake_word            import (
     WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,
 )
@@ -559,6 +563,60 @@ INLINE_TOOL_META: dict[str, dict] = {
     },
 }
 
+# ── M8: post-action verification (§3.13) ─────────────────────────────────────
+# core/verifier.py has been dormant since Phase 1. It runs now, for every tool
+# that declares verification="verifier" and carries a `verify` callable in its
+# TOOL dict — the probe lives next to the action it checks (open_app checks the
+# process, browser_control reads the URL back, computer_control checks the
+# file/window). What the Verifier appends is what keeps "Opened X." from
+# becoming a claim nobody checked.
+VERIFIER = Verifier()
+VERIFY_TIMEOUT_S = 5.0
+
+
+def verification_note(vres) -> str:
+    """The model-facing verdict, appended to the tool's result.
+
+    Each status gets its own wording because each is a different claim:
+    VERIFIED may be reported as done; FAILED must never be; PARTIAL and
+    NOT VERIFIED must be said as uncertainty, not dressed up as success.
+    """
+    msg = (vres.message or "").strip()
+    if vres.status == VerificationStatus.VERIFIED:
+        return f"\n[VERIFIED] {msg}"
+    if vres.status == VerificationStatus.FAILED:
+        return (f"\n[VERIFICATION FAILED] {msg}. "
+                f"Do NOT claim this action succeeded — say what was actually "
+                f"confirmed and what was not.")
+    if vres.status == VerificationStatus.PARTIAL:
+        return f"\n[PARTIALLY VERIFIED] {msg}"
+    return f"\n[NOT VERIFIED] {msg}"
+
+
+def _register_verifier_rules(registry, verifier=None) -> int:
+    """Bind every action's `verify` callable into the Verifier.
+
+    Called once at startup with the action registry; returns how many rules
+    were registered (0 is legal — a build with no verifiable tools still has
+    to boot).
+    """
+    verifier = VERIFIER if verifier is None else verifier
+    count = 0
+    for name in sorted(registry.names()):
+        fn = registry.verify_fn(name)
+        if fn is None:
+            continue
+        verifier.register_rule(VerificationRule(
+            tool_name=name,
+            strategy=VerificationStrategy.CUSTOM,
+            check_fn=fn,
+        ))
+        count += 1
+    if count:
+        print(f"[Verify] {count} verification rule(s) registered")
+    return count
+
+
 class _ReconnectSignal(Exception):
     """Raised inside the session TaskGroup to force a clean, voluntary reconnect
     (e.g. the user picked a new voice — the voice is fixed at connect time, so
@@ -702,6 +760,9 @@ class JarvisLive:
             reserved_names=_inline_names,
             logger=lambda msg: print(f"[Actions] {msg}"),
         )
+        # M8: bind the probes the actions declared (verification="verifier")
+        # into the shared Verifier, before any dispatch can happen.
+        _register_verifier_rules(self._action_registry)
         _perf_mark("discover_actions")
 
         # Plugins must not collide with either an inline tool or a discovered action.
@@ -1505,6 +1566,7 @@ class JarvisLive:
 
         loop   = asyncio.get_event_loop()
         result = "Done."
+        _failed = False
 
         try:
             if name == "recall_memory":
@@ -1635,13 +1697,21 @@ class JarvisLive:
                     result = f"Unknown tool: {name}"
 
         except asyncio.TimeoutError:
+            _failed = True
             result = f"Tool '{name}' timed out after {policy.timeout}s."
-            print(f"[JARVIS] ⏱ {name} exceeded its {policy.timeout}s budget")
+            print(f"[JARVIS] ✖ {name} exceeded its {policy.timeout}s budget")
             self.speak_error(name, f"timed out after {policy.timeout}s")
         except Exception as e:
+            _failed = True
             result = f"Tool '{name}' failed: {e}"
             traceback.print_exc()
             self.speak_error(name, e)
+
+        # M8: verify before yielding the turn. A crashed/timed-out dispatch
+        # already told the model the truth — verifying it would only add a
+        # second opinion about an event that did not happen.
+        if not _failed and policy.verification == "verifier":
+            result = await self._run_verification(name, args, result)
 
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
@@ -1662,6 +1732,32 @@ class JarvisLive:
             response={"result": result},
             **_extra
         )
+
+    async def _run_verification(self, name: str, args: dict, result) -> str:
+        """Run the Verifier for `name` and append its verdict to the result.
+
+        Bounded by VERIFY_TIMEOUT_S: a probe stuck on a wedged process list
+        or browser must not hold the conversation — on timeout the note says
+        the check never finished rather than guessing at its answer. Runs in
+        an executor because the probes are synchronous OS/playwright calls.
+        """
+        loop = asyncio.get_event_loop()
+        try:
+            vres = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, lambda: VERIFIER.verify(name, args, result)),
+                timeout=VERIFY_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            vres = VerificationResult(
+                status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+                message=f"verification timed out after {VERIFY_TIMEOUT_S:g}s")
+        except Exception as e:
+            vres = VerificationResult(
+                status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+                message=f"verification crashed: {e}")
+        print(f"[Verify] {name}: {vres.status.value} "
+              f"(confidence {vres.confidence:.2f}) — {vres.message}")
+        return f"{result}{verification_note(vres)}"
 
     async def _send_realtime(self):
         while True:

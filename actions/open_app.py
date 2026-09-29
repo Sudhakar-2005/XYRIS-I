@@ -1,7 +1,10 @@
 import time
 import subprocess
 import platform
+import re
 import shutil
+
+from core.verifier import VerificationResult, VerificationStatus
 
 try:
     import psutil
@@ -273,6 +276,101 @@ def open_app(
         return f"Failed to open {app_name}: {e}"
 
 
+# ── M8 post-action verification (audit §3.13) ─────────────────────────────────
+def _match_tokens(app_name: str) -> list[str]:
+    """Substrings worth looking for among running process names."""
+    raw = _normalize(app_name).lower().strip()
+    out: set[str] = set()
+    for base in (raw, app_name.lower().strip()):
+        base = base.removesuffix(".exe").rstrip(":")
+        if base:
+            out.add(base)
+        for part in re.split(r"[.:/_\s-]+", base):
+            if len(part) >= 4:
+                out.add(part)
+    return sorted(out)
+
+
+def _running_match(app_name: str) -> list[str] | None:
+    """Names of running processes matching `app_name`.
+
+    The real probe behind ``verify_opened``: psutil when it is installed,
+    the Windows ``tasklist`` as fallback, ``None`` when neither exists
+    (the caller then reports honestly that it cannot check — tests patch
+    this function, never the OS).
+    """
+    tokens = _match_tokens(app_name)
+    if not tokens:
+        return []
+
+    try:
+        import psutil
+    except ImportError:
+        psutil = None
+
+    if psutil is not None:
+        hits = []
+        for proc in psutil.process_iter(["name"]):
+            try:
+                name = (proc.info.get("name") or "").lower().removesuffix(".exe")
+            except Exception:
+                continue
+            if name and any(t in name or name in t for t in tokens):
+                hits.append(name)
+        return hits
+
+    if _SYSTEM == "Windows":
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True, timeout=5, text=True, check=False,
+            ).stdout or ""
+            hits = []
+            for line in out.splitlines():
+                name = (line.split('","')[0].strip('"').lower()
+                        .removesuffix(".exe"))
+                if name and any(t in name or name in t for t in tokens):
+                    hits.append(name)
+            return hits
+        except Exception:
+            return None
+    return None
+
+
+def verify_opened(args, output):
+    """Post-dispatch probe (M8): the handler said "Opened X." — now prove it.
+
+    A launch is only VERIFIED when a matching process is really running.
+    The Start-menu fallback path can open apps whose process name shares
+    nothing with what was typed, so a miss reports FAILED ("do not claim
+    success") rather than inventing a pass; and when the handler itself
+    already reported failure there is nothing to verify.
+    """
+    out = str(output or "")
+    app = str((args or {}).get("app_name") or "")
+    if not out.startswith("Opened"):
+        return VerificationResult(
+            status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+            message="the handler itself did not report a successful launch")
+    try:
+        hits = _running_match(app)
+    except Exception as e:
+        return VerificationResult(
+            status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+            message=f"process probe failed: {e}")
+    if hits is None:
+        return VerificationResult(
+            status=VerificationStatus.UNVERIFIABLE, confidence=0.0,
+            message="no process probe available on this system")
+    if hits:
+        return VerificationResult(
+            status=VerificationStatus.VERIFIED, confidence=0.85,
+            message=f"running process matches '{app}': {hits[0]}")
+    return VerificationResult(
+        status=VerificationStatus.FAILED, confidence=0.5,
+        message=f"no running process matches '{app}'")
+
+
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "open_app",
@@ -280,7 +378,7 @@ TOOL = {
     "timeout": 30,
     "requires_confirmation": False,
     "supports_undo": False,
-    "verification": "none",
+    "verification": "verifier",
     "description": "Opens any application on the computer. Use this whenever the user asks to open, launch, or start any app, website, or program. Always call this tool — never just say you opened it.",
     "parameters": {
         "type": "OBJECT",
@@ -295,4 +393,5 @@ TOOL = {
         ]
     },
     "handler": open_app,
+    "verify": verify_opened,
 }

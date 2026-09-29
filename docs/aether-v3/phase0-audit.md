@@ -249,6 +249,18 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   `actions/open_app.py`, `actions/computer_control.py`, `actions/browser_control.py`,
   `core/verifier.py`. **Risk:** medium (each tool needs a real check).
   **Test:** per-tool verify tests with fake process/window probes.
+  **✅ M8:** Verifier wired through the dispatcher — the new
+  `verification="verifier"` mode makes `action_loader` require a callable
+  `verify` (both mismatch directions rejected at load), startup binds the
+  probes (`_register_verifier_rules`), and `_dispatch_tool` runs each probe
+  behind `VERIFY_TIMEOUT_S` and appends the verdict (`verification_note`:
+  VERIFIED may be reported, FAILED must never be). Real checks:
+  `open_app` proves a running process (psutil → tasklist fallback),
+  `browser_control` reads the page URL back (PARTIAL for native opens,
+  blank page = FAILED), `computer_control` checks the screenshot file and
+  the focused window (pygetwindow) — everything else states that it has no
+  observable post-state instead of rubber-stamping. Probe crashes fail
+  closed. 43 tests in `tests/test_verifier_wiring.py`.
 
 ### 3.14 Confirmation & undo
 - **AETHER:** `core/confirm.py` gate bound once to UI (main.py:2216-2220),
