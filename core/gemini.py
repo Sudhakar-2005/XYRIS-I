@@ -78,10 +78,18 @@ else:
 
 _KEY_FILE = _BASE / "config" / "api_keys.json"
 
-# Ladders, tried left to right. Change a model HERE and the whole app follows.
-FAST = "fast"      # short classification, extraction, one-line decisions
-SMART = "smart"    # reasoning, generation, long documents, images
-SEARCH = "search"  # grounded search — REST only, see below
+# Tiers, ladders, the Live model string, session-slot policy and cooldown
+# policy all live in core.model_manager — one definition the whole app
+# shares (the conversation's LIVE_MODEL in main.py imports the same string).
+# They are re-exported here because every caller already writes
+# `gemini.FAST`, `gemini.call(...)`, `tier=gemini.SEARCH` and so on.
+from core.model_manager import (       # noqa: F401 — re-exported API
+    FAST, SMART, SEARCH, LIVE,
+    LIVE_MODEL,
+    COOLDOWN_SECONDS,
+    MODEL_MANAGER,
+    LIVE_MANAGER,
+)
 
 # A rung that means "ask the Live model instead", through a short throwaway
 # session rather than the REST text API.
@@ -111,41 +119,10 @@ SEARCH = "search"  # grounded search — REST only, see below
 #
 #     What it cannot carry is grounding metadata, so grounded web search stays
 #     on REST — see SEARCH.
-LIVE = "live"
 
-_LADDERS = {
-    FAST: (LIVE, "gemini-2.5-flash-lite", "gemini-2.5-flash"),
-    SMART: (LIVE, "gemini-2.5-flash", "gemini-2.5-flash-lite"),
-    # Grounded search needs response.candidates[...].grounding_metadata, which a
-    # Live turn does not produce. REST only, and it says so rather than silently
-    # returning an answer with no sources behind it.
-    SEARCH: ("gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite"),
-}
-
-# The Live model to use for one-shot calls. main.py owns the real one; this is
-# only the fallback for when this module is imported without it (tests).
-_LIVE_FALLBACK = "models/gemini-3.1-flash-live-preview"
-
-# How many one-shot Live sessions may exist at once.
-#
-# THE USER'S CONVERSATION OUTRANKS EVERY SIDE CALL.
-# Nothing here can reach the microphone or the speaker — main.py has exactly one
-# `.receive()` and it is bound to its own session, and audio only reaches the
-# speaker through that one loop — so a side call cannot answer the user or talk
-# over the reply. Verified alongside a live main session: four side calls fired
-# while it was connected, each got its own answer, and the main session replied
-# correctly both before and after with no errors.
-#
-# What a side call CAN do is take up a concurrent-session slot. That is the one
-# way it could hurt the conversation, so it is capped, and a call that cannot
-# get a slot quickly does not queue behind the others — it falls to the REST
-# rung, which is what the ladder is for.
-# Three, from the measurement: four side calls plus the conversation ran
-# together without complaint, so three leaves the conversation a slot in hand
-# while still covering any burst this app actually produces — tool calls run one
-# after another, and the screen agent's loop is sequential.
-_LIVE_SLOTS = threading.BoundedSemaphore(3)
-_LIVE_SLOT_WAIT = 3.0
+# One-shot Live session slots (the cap, the wait, and why the conversation
+# outranks every side call) are owned by LiveModelManager in
+# core/model_manager.py; _live_call borrows one through LIVE_MANAGER.slot().
 
 _ONE_SHOT_SYSTEM = (
     "You are a data-processing function, not an assistant and not in a "
@@ -167,29 +144,8 @@ MIN_TIMEOUT_MS = 10_000
 _key_lock = threading.Lock()
 _cached_key: str | None = None
 
-# A rung that answered 429 is out of quota, and on the free tier it will stay
-# that way for a while. Retrying it on every single call is a wasted round trip
-# in front of every request the assistant makes — measured on this key, the
-# lite rung was 429ing continuously, so every call was paying for it before
-# reaching the model that could actually answer. Remembering that for a few
-# minutes turns the ladder from a cost into a saving.
-_COOLDOWN_SECONDS = 300
-_cooldown: dict[str, float] = {}
-_cool_lock = threading.Lock()
-
-
-def _cool(model: str) -> None:
-    with _cool_lock:
-        _cooldown[model] = time.monotonic() + _COOLDOWN_SECONDS
-
-
-def _cooling(model: str) -> bool:
-    with _cool_lock:
-        until = _cooldown.get(model, 0.0)
-        if until and time.monotonic() < until:
-            return True
-        _cooldown.pop(model, None)
-        return False
+# Cooldown policy (429 rungs are demoted for a few minutes) lives in
+# core.model_manager — ModelManager.record() applies it on every failure.
 
 
 def api_key(refresh: bool = False) -> str:
@@ -232,8 +188,10 @@ class _Reply:
 
 
 def _live_model() -> str:
-    """Whatever main.py is running, so upgrading the assistant upgrades this."""
-    return getattr(sys.modules.get("main"), "LIVE_MODEL", None) or _LIVE_FALLBACK
+    """The shared Live model string from core.model_manager — main.py's
+    conversation session imports the very same constant, so side calls and
+    the conversation can never drift apart."""
+    return LIVE_MODEL
 
 
 def _to_live_parts(contents) -> list:
@@ -335,11 +293,6 @@ def _live_call(contents, config, timeout_ms: int, key: str):
     if not parts:
         return None
 
-    if not _LIVE_SLOTS.acquire(timeout=_LIVE_SLOT_WAIT):
-        # Every slot is busy. Do not wait it out: falling to REST costs less
-        # than holding a session the user's conversation might want.
-        raise RuntimeError("no free Live slot — leaving them for the conversation")
-
     box: dict = {}
 
     def runner():
@@ -349,12 +302,13 @@ def _live_call(contents, config, timeout_ms: int, key: str):
         except BaseException as e:                     # noqa: BLE001
             box["error"] = e
 
-    try:
+    # Borrow a session slot for the duration. Raises immediately when every
+    # slot is busy (falling to REST costs less than holding a session the
+    # user's conversation might want) and always releases, even on failure.
+    with LIVE_MANAGER.slot():
         th = threading.Thread(target=runner, daemon=True, name="gemini-live-oneshot")
         th.start()
         th.join(timeout=max(15.0, timeout_ms / 1000.0 + 20.0))
-    finally:
-        _LIVE_SLOTS.release()
     if "error" in box:
         raise box["error"]
     text = box.get("text")
@@ -375,10 +329,10 @@ def call(contents, tier: str = FAST, config=None,
     # model name — screen_agent lets the user pick one in its settings — and it
     # is tried first, with the reasoning ladder behind it. So a user's choice is
     # honoured, and a user's choice that is having an outage still degrades to
-    # something that answers instead of to nothing.
-    ladder = _LADDERS.get(tier)
-    if ladder is None:
-        ladder = (tier,) + tuple(m for m in _LADDERS[SMART] if m != tier)
+    # something that answers instead of to nothing. ModelManager supplies the
+    # measured order, with any rung currently on quota-cooldown demoted to
+    # the back rather than dropped.
+    ladder = MODEL_MANAGER.order(tier)
 
     resolved_key = key or api_key()
     if not resolved_key:
@@ -386,12 +340,13 @@ def call(contents, tier: str = FAST, config=None,
         return None
 
     cl = None
-    tried = [m for m in ladder if not _cooling(m)] or list(ladder)
-    for model in tried:
+    for model in ladder:
+        t0 = time.monotonic()
         try:
             if model == LIVE:
                 reply = _live_call(contents, config, timeout_ms, resolved_key)
                 if reply is not None:
+                    MODEL_MANAGER.record(model, True, time.monotonic() - t0)
                     return reply
                 raise RuntimeError("the Live turn came back empty")
             if cl is None:
@@ -399,13 +354,16 @@ def call(contents, tier: str = FAST, config=None,
             kwargs = {"model": model, "contents": contents}
             if config is not None:
                 kwargs["config"] = config
-            return cl.models.generate_content(**kwargs)
+            resp = cl.models.generate_content(**kwargs)
+            MODEL_MANAGER.record(model, True, time.monotonic() - t0)
+            return resp
         except Exception as e:
             msg = str(e)
-            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-                _cool(model)
+            quota = MODEL_MANAGER.record(model, False,
+                                         time.monotonic() - t0, error=msg)
+            if quota:
                 print(f"[Gemini] {model}: out of quota — skipping it for "
-                      f"{_COOLDOWN_SECONDS // 60} minutes")
+                      f"{COOLDOWN_SECONDS // 60} minutes")
             else:
                 print(f"[Gemini] {model}: {type(e).__name__}: {msg[:140]}")
     return None
