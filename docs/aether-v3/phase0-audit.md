@@ -288,6 +288,21 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   **V3 work:** coverage audit — every HIGH-risk tool routed through the gate;
   confirm the model can never answer the gate itself (inspect `confirm.resolve`
   callers). **Risk:** low. **Test:** risk-coverage test iterating all tools.
+  **✅ M12:** the coverage audit is now a test file, and it found two real
+  gaps that got fixed: (1) `memory_controller.clear` (safety: DANGEROUS) was
+  self-authorized by the model writing `confirm_key` itself — the exact
+  forgeable gate `core/confirm.py` exists to replace — and now parks behind
+  `confirm.request` with the key fixed in code; (2) `desktop_control`
+  organize/clean moved files with no protection at all — both now push a
+  batch undo (journal pattern copied from `file_controller.organize_desktop`),
+  and the tool declares `supports_undo: True`. The audit locks in the rest:
+  safety's nine concrete DANGEROUS actions each map to a real mechanism
+  (banner / undo / Gmail's trash-recoverable path), `params.get("confirmed"`
+  and `params.get("confirm_key")` appear nowhere in actions or plugins, and
+  `confirm.resolve` remains UI-only. 13 tests in
+  `tests/test_security_confirmation_audit.py` (existing `test_tool_metadata`
+  keeps the dispatch-level gate tests: dangerous⇒gated, forbidden refusal,
+  park-then-run).
 
 ### 3.15 Observability
 - **AETHER:** `core/event_bus.py` (Priority, EventType, async handlers)
@@ -328,6 +343,15 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   before every commit); no secrets observed in source; safety manager wired only
   via `actions/safety_action.py`. **V3:** confirm key file ignored, extend
   permission metadata (3.9) as the enforcement layer (Phase 40). **Risk:** low.
+  **✅ M12:** the security half of the audit is executable —
+  `.gitignore` covers `config/api_keys.json` and the test fails if the file
+  ever becomes tracked; secret-shaped literals (Google/OpenAI/GitHub/Slack
+  patterns) are banned from `actions/`, `plugins/`, `core/`, `dashboard/`,
+  `memory/`, `main.py`, `ui.py`; and every dashboard route is classified —
+  either `_auth`-gated, a documented query-token socket (`?token=` vs
+  `self._tokens`), or one of the authentication-scheme endpoints (login /
+  auto-login / device-login, each asserted to validate its one-time key or
+  device token). Permission-metadata-as-enforcement remains Phase 40.
 
 ### 3.18 Error recovery
 - **AETHER:** bounded retry + backoff proven in visual engine (`_RETRYABLE`,

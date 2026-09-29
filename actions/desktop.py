@@ -9,6 +9,8 @@ import platform
 from pathlib import Path
 from datetime import datetime
 
+from core.undo import push_undo
+
 try:
     import pyautogui
     _PYAUTOGUI = True
@@ -310,6 +312,7 @@ def organize_desktop(mode: str = "by_type") -> str:
     desktop       = _get_desktop()
     skip_exts     = _SKIP_EXTENSIONS.get(_OS, set())
     moved, skipped = [], []
+    journal: list[tuple[Path, Path]] = []   # (where it was, where it went)
 
     for item in desktop.iterdir():
         if item.is_dir() or item.name.startswith("."):
@@ -336,8 +339,16 @@ def organize_desktop(mode: str = "by_type") -> str:
             skipped.append(item.name)
             continue
 
+        origin = item.resolve()
         shutil.move(str(item), str(new_path))
+        journal.append((origin, new_path.resolve()))
         moved.append(f"{item.name} → {folder_name}/")
+
+    # M12: one command, dozens of moves — so one undo that reverses them all
+    # (same journal pattern file_controller.organize_desktop already uses).
+    if journal:
+        push_undo(f"organized the desktop ({mode}, {len(journal)} files)",
+                  lambda entries=tuple(journal): _undo_moves(entries))
 
     result = f"Desktop organized ({mode}): {len(moved)} files moved."
     if moved:
@@ -347,6 +358,28 @@ def organize_desktop(mode: str = "by_type") -> str:
     if skipped:
         result += f"\n{len(skipped)} file(s) skipped (name conflict)."
     return result
+
+
+def _undo_moves(entries) -> str:
+    """Put every file a batch moved back where it started (M12)."""
+    restored = 0
+    for origin, moved_to in entries:
+        try:
+            if moved_to.exists():
+                origin.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(moved_to), str(origin))
+                restored += 1
+        except Exception as e:
+            print(f"[desktop] undo: {moved_to.name}: {e}")
+    # Clear away folders the batch created, only while still empty.
+    for folder in {m.parent for _o, m in entries}:
+        try:
+            if folder != _get_desktop() and folder.exists() \
+                    and folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
+        except Exception:
+            pass
+    return f"{restored} file(s) put back on the desktop."
 
 
 def list_desktop() -> str:
@@ -382,6 +415,7 @@ def clean_desktop() -> str:
     archive_dir.mkdir(exist_ok=True)
 
     moved = 0
+    journal: list[tuple[Path, Path]] = []
     for item in desktop.iterdir():
         if item.is_dir() or item.name.startswith("."):
             continue
@@ -389,8 +423,15 @@ def clean_desktop() -> str:
             continue
         new_path = archive_dir / item.name
         if not new_path.exists():
+            origin = item.resolve()
             shutil.move(str(item), str(new_path))
+            journal.append((origin, new_path.resolve()))
             moved += 1
+
+    # M12: safety classifies clean DANGEROUS — the batch gets an undo.
+    if journal:
+        push_undo(f"cleaned the desktop ({moved} files)",
+                  lambda entries=tuple(journal): _undo_moves(entries))
 
     return f"Desktop cleaned: {moved} files archived to '{archive_dir.name}'."
 
@@ -488,7 +529,7 @@ TOOL = {
     "risk": "caution",
     "timeout": 90,
     "requires_confirmation": False,
-    "supports_undo": False,
+    "supports_undo": True,
     "verification": "none",
     "description": "Controls the desktop: wallpaper, organize, clean, list, stats.",
     "parameters": {

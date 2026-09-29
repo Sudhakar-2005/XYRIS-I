@@ -15,6 +15,7 @@ from memory.memory_manager import (
     get_memory_stats, export_memory, import_memory, clear_category,
     clear_all_memory, get_memory_age,
 )
+from core import confirm
 
 
 def memory_controller(
@@ -79,12 +80,23 @@ def memory_controller(
 
     elif action == "clear":
         target = str(params.get("target", "")).strip()
-        if target == "all":
-            return clear_all_memory(confirm_key=str(params.get("confirm_key", "")))
-        elif target:
-            return clear_category(target)
-        else:
+        if not target:
             return "Please specify a target: a category name or 'all'."
+        # M12: safety classifies 'clear' DANGEROUS, and the old guard was the
+        # model writing confirm_key itself — the forgeable gate core/confirm.py
+        # was written to replace. The human's banner is the confirmation now;
+        # the key below is fixed by the code, never supplied by the model.
+        def _run_clear():
+            if target == "all":
+                return clear_all_memory(confirm_key="YES_DELETE_ALL")
+            return clear_category(target)
+        return confirm.request(
+            key="memory_controller.clear",
+            title="Clear stored memories",
+            detail=(f"Permanently delete ALL remembered memories."
+                    if target == "all"
+                    else f"Permanently delete every memory in '{target}'."),
+            run=_run_clear)
 
     elif action == "age":
         if not key:

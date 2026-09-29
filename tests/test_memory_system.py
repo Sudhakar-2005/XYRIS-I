@@ -15,6 +15,7 @@ Verifies:
 import unittest
 import json
 import sys
+import time
 from pathlib import Path
 
 # Force UTF-8 encoding on Windows console for emoji prints
@@ -34,6 +35,7 @@ from memory.memory_manager import (
     clear_category, clear_all_memory, get_memory_age,
 )
 from actions.memory_controller import memory_controller
+from core import confirm
 
 
 class TestMemorySystem(unittest.TestCase):
@@ -296,13 +298,40 @@ class TestMemoryControllerNewActions(unittest.TestCase):
         self.assertIn("provide import data", result)
 
     def test_clear_action_category(self):
+        # M12: safety classifies 'clear' DANGEROUS — the banner goes up and
+        # only a pressed CONFIRM deletes anything (worker thread → poll log).
         remember("ctrl_clear_test", "To clear", category="notes")
-        result = memory_controller(parameters={"action": "clear", "target": "notes"})
-        self.assertIn("Cleared", result)
+        logs: list[str] = []
+        confirm.bind(lambda t, d: None, lambda: None, log=logs.append)
+        try:
+            result = memory_controller(
+                parameters={"action": "clear", "target": "notes"})
+            self.assertIn("[CONFIRMATION_PENDING]", result)
+            confirm.resolve(accepted=True)
+            for _ in range(100):
+                if any("Cleared" in ln for ln in logs):
+                    break
+                time.sleep(0.05)
+            self.assertTrue(any("Cleared" in ln for ln in logs),
+                            f"clear never ran: {logs}")
+        finally:
+            confirm.bind(None, None)      # restore the unbound refusal path
 
     def test_clear_action_all_needs_confirm(self):
-        result = memory_controller(parameters={"action": "clear", "target": "all"})
-        self.assertIn("YES_DELETE_ALL", result)
+        # M12: the model can no longer self-authorize with confirm_key —
+        # our code fixes the key after a human presses CONFIRM, and this
+        # test never presses it, so nothing may be deleted.
+        shown: list[str] = []
+        confirm.bind(lambda t, d: shown.append(t), lambda: None)
+        try:
+            result = memory_controller(
+                parameters={"action": "clear", "target": "all"})
+            self.assertIn("[CONFIRMATION_PENDING]", result)
+            self.assertTrue(shown, "no banner raised for clear-all")
+            self.assertNotIn("YES_DELETE_ALL", result)
+            confirm.resolve(accepted=False)   # human says no
+        finally:
+            confirm.bind(None, None)
 
     def test_age_action(self):
         remember("ctrl_age_test", "Age test", category="notes")
