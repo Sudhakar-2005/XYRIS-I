@@ -596,6 +596,24 @@ def _keep_context_of(exc: BaseException) -> bool:
     return True
 
 
+def _is_resumption_rejection(exc: BaseException, resumed_with: bool) -> bool:
+    """True when the server refused the resumption handle we replayed.
+
+    The handle has a limited life; without this check the same dead handle
+    would be replayed on every retry and the assistant would never come back —
+    the feature meant to survive a reconnect would be the thing preventing
+    one. Classification lives here rather than inline in run() so reconnect
+    behaviour is unit-testable (§3.8, M6).
+    """
+    if not resumed_with:
+        return False
+    s = str(exc)
+    return ("resum" in s.lower()
+            or "handle" in s.lower()
+            or "INVALID_ARGUMENT" in s
+            or "NOT_FOUND" in s)
+
+
 class JarvisLive:
     def __init__(self, ui: JarvisUI):
         self.ui             = ui
@@ -1017,6 +1035,33 @@ class JarvisLive:
             + ("..." if keep else " (starting a fresh conversation)...")
         )
         raise _ReconnectSignal(keep_context=keep)
+
+    def _prepare_voluntary_reconnect(self, exc: BaseException) -> None:
+        """Run-loop bookkeeping for a voluntary reconnect (§3.8, M6).
+
+        keep_context=False is a deliberate clean slate (voice/persona change):
+        drop the resumption handle so the next connect really does start empty.
+        keep_context=True replays the handle and the conversation continues.
+        Backoff resets either way — a requested reconnect is not a failure and
+        must not wait.
+        """
+        if not _keep_context_of(exc):
+            self._resume_handle = None
+        self._conn_backoff = 0
+
+    def _note_resumption_update(self, sru) -> None:
+        """Track a server session_resumption update (§3.8, M6).
+
+        `resumable` goes false while a turn is mid-flight — replaying a handle
+        from that moment is exactly what the flag exists to prevent — so only
+        resumable handles are kept, and each new handle replaces the last.
+        """
+        if sru is None:
+            return
+        if getattr(sru, "resumable", False) and getattr(sru, "new_handle", None):
+            if self._resume_handle is None:
+                print("[JARVIS] 🔗 Session resumption armed")
+            self._resume_handle = sru.new_handle
 
     def _make_remote_key(self):
         """Called from Qt main thread when user presses Remote Control."""
@@ -1813,17 +1858,10 @@ class JarvisLive:
                 async for response in self.session.receive():
 
                     # ── Session resumption ───────────────────────────────────
-                    # The server sends this periodically. `resumable` goes false
-                    # while a turn is mid-flight — replaying a handle from that
-                    # moment is what the flag exists to prevent — so only
-                    # resumable handles are kept. This is three lines and it is
-                    # the entire fix for "every reconnect forgets everything".
-                    _sru = getattr(response, "session_resumption_update", None)
-                    if _sru is not None:
-                        if getattr(_sru, "resumable", False) and getattr(_sru, "new_handle", None):
-                            if self._resume_handle is None:
-                                print("[JARVIS] 🔗 Session resumption armed")
-                            self._resume_handle = _sru.new_handle
+                    # The server sends this periodically; only resumable
+                    # handles are kept (see _note_resumption_update).
+                    self._note_resumption_update(
+                        getattr(response, "session_resumption_update", None))
 
                     if response.data:
                         if self._interrupted:
@@ -2550,25 +2588,13 @@ class JarvisLive:
                 # session immediately with no backoff and no scary logs.
                 if _is_reconnect_signal(e):
                     print("[JARVIS] Voluntary reconnect requested.")
-                    if not _keep_context_of(e):
-                        # A deliberate clean slate (voice change) — drop the
-                        # handle so the next connect really does start empty.
-                        self._resume_handle = None
-                    self._conn_backoff = 0
+                    self._prepare_voluntary_reconnect(e)
                     continue
 
                 # A resumption handle the server will not accept — expired, or
-                # belonging to a session it has since dropped. Without this, the
-                # same dead handle would be replayed on every retry and the
-                # assistant would never come back at all: the feature meant to
-                # survive a reconnect would be the thing preventing one. Drop it
-                # once and let the next attempt start clean.
-                if _resumed_with and (
-                    "resum" in str(e).lower()
-                    or "handle" in str(e).lower()
-                    or "INVALID_ARGUMENT" in str(e)
-                    or "NOT_FOUND" in str(e)
-                ):
+                # belonging to a session it has since dropped. Drop it once and
+                # let the next attempt start clean (see _is_resumption_rejection).
+                if _is_resumption_rejection(e, _resumed_with):
                     print("[JARVIS] 🔗 Resumption handle rejected — starting a fresh session")
                     self.ui.write_log("SYS: Could not restore the conversation — starting fresh.")
                     self._resume_handle = None

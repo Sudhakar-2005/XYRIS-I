@@ -175,6 +175,12 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   (main.py:34/860/1216/1244/1509) — AETHER mirrors this (proactive + brief config).
 - **V3:** Phase 21 — formalize resume: on reconnect, restore context then fresh
   session; transcript dedup. **Risk:** medium. **Test:** reconnect unit tests.
+  **✅ M6:** resume formalized through three testable seams —
+  `_note_resumption_update` (only resumable handles kept, newest wins),
+  `_is_resumption_rejection` (dead handle → fresh session, never masks real
+  errors), `_prepare_voluntary_reconnect` (keep_context policy) — plus
+  signal/group unwrapping, dedup and config-replay coverage: 34 tests in
+  `tests/test_reconnect_resume.py`.
 
 ### 3.9 Tools / action registry
 - **AETHER:** `core/action_loader.py` discovery (wired main.py:81), dispatch in
@@ -205,7 +211,12 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
 - **Mark-LV:** simple 9 KB memory (dump-based).
 - **V3:** Phase 20 — do **not** migrate wholesale. Keep v1 (it already does
   recall→relevance→selection), and selectively adopt v2 ideas (episodic
-  trajectories for the planner) only when the planner is wired. Decide in M6.
+  trajectories for the planner) only when the planner is wired.
+  **✅ DECIDED at M6:** keep v1 as the wired memory — `format_memory_for_prompt`
+  stays the recall formatter feeding the system instruction (guarded by
+  `test_system_instruction_is_assembled_by_v1_memory`). `core/memory_v2.py`
+  episodic/trajectory ideas land only alongside planner wiring (M8+), never as
+  a wholesale swap (ABSOLUTE RULE).
   **Risk:** low if untouched; HIGH if wholesale swap (forbidden by ABSOLUTE RULE).
 
 ### 3.12 Vision
