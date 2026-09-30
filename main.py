@@ -421,7 +421,9 @@ TOOL_DECLARATIONS = [
             "The user can say this in ANY language. "
             "Calling this puts a confirmation on the user's screen — the "
             "assistant does NOT shut down until they press CONFIRM. Say that a "
-            "confirmation is waiting and never claim it is already done."
+            "confirmation is waiting and never claim it is already done. "
+            "NEVER call it before the user has spoken or typed something in "
+            "this session — the startup briefing does not count."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -769,6 +771,9 @@ class JarvisLive:
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
         self._last_user_speech = time.monotonic()  # updated on every user utterance
+        self._heard_user_text   = False  # True once real user input reaches the
+                                         # session (mic transcript / typed) — the
+                                         # shutdown gate refuses without it
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
 
         # ── M14: degraded offline voice (§3.6) ───────────────────────────
@@ -1172,6 +1177,10 @@ class JarvisLive:
         return url, key, f"{url}/auto-login?key={key}", manual
 
     def _on_text_command(self, text: str):
+        # Typed input is the user, by definition — record it for the shutdown
+        # gate even if this particular command is dropped below.
+        self._heard_user_text = True
+        print(f"[Input] typed command: {text!r}", flush=True)
         if not self._loop or not self.session:
             return
         # Respect wake-word sleep: a typed command must not be answered while
@@ -1499,6 +1508,26 @@ class JarvisLive:
                           f"on this system. Nothing was done."})
 
         if policy.requires_confirmation:
+            if (name == "shutdown_jarvis"
+                    and not getattr(self, "_heard_user_text", False)):
+                # Fail closed: the model has called shutdown_jarvis on its own
+                # right after the startup briefing, with nobody having said a
+                # word (the mic is not streamed while JARVIS speaks, so there
+                # was no user turn to react to). The prompt rule — only when
+                # the user explicitly ends the session — is enforced here,
+                # where a rule can actually be enforced: no banner, no pending
+                # action, an honest sentence the model must work from.
+                print("[Policy] ✖ shutdown_jarvis refused — "
+                      "no user input in this session yet")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result":
+                              "Refused: shutdown_jarvis requires the user to "
+                              "have spoken or typed something in this session "
+                              "first. The startup briefing does not count. "
+                              "Nothing was done — do not call this tool again "
+                              "until the user explicitly asks to end the "
+                              "session."})
             if confirm_gate.pending_title():
                 sentence = ("There is already a confirmation waiting on "
                             "screen. Ask the user to answer that one first.")
@@ -2094,6 +2123,14 @@ class JarvisLive:
                             if txt:
                                 in_buf.append(txt)
                                 self._last_user_speech = time.monotonic()
+                                self._heard_user_text = True
+                                # Every word the server heard from our mic,
+                                # logged as it arrives — phantom speech (echo,
+                                # TV, room noise) must be visible in the log,
+                                # not only at turn-complete where a discarded
+                                # turn takes it to the grave with it.
+                                print(f"[Audio] user speech: {txt!r}",
+                                      flush=True)
 
                         if sc.turn_complete:
                             if self._turn_done_event:
@@ -2627,9 +2664,11 @@ class JarvisLive:
                     await asyncio.sleep(0.1)
                 if self.session:
                     # A remote command is deliberate control and the phone user
-                    # has no desktop WAKE button — so it wakes JARVIS if asleep.
+                    # has no desktop WAKE button �?" so it wakes JARVIS if asleep.
                     if self._wake_enabled and not self._awake:
                         self.wake(reason="remote command")
+                    self._heard_user_text = True
+                    print(f"[Input] web command: {text!r}", flush=True)
                     await self.session.send_client_content(
                         turns={"role": "user", "parts": [{"text": text}]},
                         turn_complete=True,

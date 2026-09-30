@@ -363,6 +363,43 @@ class TestDispatcherEnforcement(unittest.TestCase):
         self.assertFalse(any("gated_probe" in m for m in self.logged),
                          self.logged)
 
+    def test_shutdown_refused_before_any_user_input(self):
+        # The model called shutdown_jarvis unprompted right after the
+        # briefing — no banner must appear, nothing may park, and the
+        # sentence must tell the model why it was refused.
+        live = _make_live(self.registry)
+        self.assertFalse(getattr(live, "_heard_user_text", False))
+
+        async def scenario():
+            resp = await live._execute_tool(_fc("shutdown_jarvis"))
+            self.assertIn("Refused", resp.response["result"])
+            self.assertIn("briefing does not count",
+                          resp.response["result"])
+            self.assertEqual(self.shown, [])
+            self.assertEqual(confirm_gate.pending_title(), "")
+
+        self._run(scenario())
+
+    def test_shutdown_parks_once_the_user_has_spoken(self):
+        # With real user input recorded, the gate behaves normally: the
+        # banner goes up and nothing dispatches until a human answers.
+        # CANCEL keeps the shutdown handler from ever executing here.
+        live = _make_live(self.registry)
+        live._heard_user_text = True
+
+        async def scenario():
+            resp = await live._execute_tool(_fc("shutdown_jarvis"))
+            self.assertIn("[CONFIRMATION_PENDING]", resp.response["result"])
+            self.assertEqual(len(self.shown), 1)
+            self.assertEqual(confirm_gate.pending_title(), "Shutdown jarvis")
+            main.confirm_gate.resolve(accepted=False)
+            await asyncio.sleep(0.3)
+            self.assertEqual(confirm_gate.pending_title(), "")
+
+        self._run(scenario())
+        self.assertFalse(any("Confirmed" in m for m in self.logged),
+                         self.logged)
+
     def test_second_gate_waits_for_the_first(self):
         live = _make_live(self.registry)
         meta = {"risk": "caution", "timeout": 30,
