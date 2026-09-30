@@ -306,11 +306,20 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   and the tool declares `supports_undo: True`. The audit locks in the rest:
   safety's nine concrete DANGEROUS actions each map to a real mechanism
   (banner / undo / Gmail's trash-recoverable path), `params.get("confirmed"`
-  and `params.get("confirm_key")` appear nowhere in actions or plugins, and
+  and   `params.get("confirm_key")` appear nowhere in actions or plugins, and
   `confirm.resolve` remains UI-only. 13 tests in
   `tests/test_security_confirmation_audit.py` (existing `test_tool_metadata`
   keeps the dispatch-level gate tests: dangerous⇒gated, forbidden refusal,
   park-then-run).
+  **✅ Post-RC (`0b62615`):** `shutdown_jarvis` now fails closed —
+  `_execute_tool` refuses it with an honest sentence until real user input
+  (mic transcript / typed command / web command) has reached the session, so
+  the prompt rule ("only when the user explicitly ends the session") is
+  enforced where a rule can actually be enforced: no banner, no pending
+  action, nothing to confirm. The briefing never counts as input, every
+  input is logged the moment it arrives (phantom speech must be visible in
+  the log, not buried at turn-complete), and the tool description says the
+  same. Two dispatcher tests in `tests/test_tool_metadata.py`.
 
 ### 3.15 Observability
 - **AETHER:** `core/event_bus.py` (Priority, EventType, async handlers)
@@ -405,6 +414,8 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   **✅ M14 (RC):** final run at the release-candidate tree: **1196 passed,
   0 failed** (1177 + 19 `tests/test_degraded.py` covering the §3.6 wiring),
   in 24 s. Every M2-M14 commit gated on a full green run.
+  **✅ Post-RC (`0b62615`):** **1198 passed, 0 failed** (1196 + the two
+  shutdown-guard dispatcher tests), in 27 s.
 
 ---
 
