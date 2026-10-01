@@ -339,7 +339,18 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   USER_INTERRUPT from dashboard emergency-stop. The bridge feeds both
   dashboard surfaces — the bounded `/api/events` ring and live `/ws` push
   (`broadcast(..., history=False)` so hot events never evict the chat
-  replay buffer). 21 tests in `tests/test_dashboard_observability.py`.
+   replay buffer). 21 tests in `tests/test_dashboard_observability.py`.
+   **✅ Phase 32:** the activity center — the line's second consumer.
+   `core/activity.py` owns a bounded (200-row), lock-protected ring of
+   one-line summaries; `_bridge_event` feeds it **first**, so the ring
+   fills with or without a dashboard and a crashing dashboard cannot stop
+   it; the HUD's drawer gained a 📡 ACTIVITY button opening
+   `ui.ActivityOverlay`, a fixed-geometry panel that drains the ring on a
+   GUI-thread QTimer (store/poll — the `set_audio_level` seam: no Qt
+   object is ever touched from a bus callback), shows the whole backlog
+   when opened, and offers CLEAR. Bound once from `run()` via
+   `JarvisUI.bind_activity_feed`. 25 tests in
+   `tests/test_activity_center.py`.
 
 ### 3.16 Dashboard
 - **AETHER:** Bearer-token auth with per-token session keys, encrypted token
@@ -507,7 +518,9 @@ performance (✅ M13: boot −67%, V2-vs-V3 numbers in
 `docs/aether-v3/bench-v2-vs-v3.txt`), STT/TTS disposition (✅ M14: §3.6
 degraded/offline wiring), vision source labels (✅ M7), startup
 optimization (✅ M5 + M13: measured 1.9 s boot, judged sufficient).
-Genuinely still open after RC, deliberately outside the V3 milestone rows:
-activity center (Phase 32) and permission-metadata enforcement in the
-dispatcher (Phase 40 — the M12 note documents the inventory that exists
-today).
+Both items deliberately left open after RC are now closed: the activity
+center (✅ Phase 32 — `core/activity.py` ring + the HUD's 📡 ACTIVITY
+overlay, 25 tests) and permission-metadata enforcement in the dispatcher
+(✅ Phase 40 — `core/permissions.py` two-tier ledger + refuse-before-gate
+in `_execute_tool`, 30 tests; the M12 inventory test keeps guarding the
+nine dangerous actions).

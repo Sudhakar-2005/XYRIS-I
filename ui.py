@@ -2995,6 +2995,164 @@ class SessionHistoryOverlay(_HudOverlay):
         QTimer.singleShot(0, self._rebuild)
 
 
+class ActivityOverlay(_HudOverlay):
+    """Live activity center — Phase 32 (§3.15).
+
+    The HUD's window onto core/activity.ActivityFeed: the bus fills the
+    feed from its worker thread, this panel drains it on a QTimer owned by
+    the GUI thread — never a Qt object touched off-thread, the same
+    store/poll seam JarvisUI.set_audio_level uses. Fixed geometry so rows
+    scrolling in never re-centre the panel; opening it shows the whole
+    bounded backlog (events that happened before you clicked count too)."""
+
+    _OW, _OH = 580, 420
+
+    def __init__(self, feed=None, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            ActivityOverlay {{
+                background: rgba(0, 6, 10, 246);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+        self.setFixedSize(self._OW, self._OH)
+        self._feed = feed
+        self._cursor = 0
+
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(20, 16, 20, 16)
+        self._lay.setSpacing(5)
+
+        hdr = QLabel("📡  ACTIVITY")
+        hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        self._lay.addWidget(hdr)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
+        self._lay.addWidget(sep)
+
+        cap = QLabel("Live event stream (bounded ring, newest last). "
+                     "The bus records; this view only reads.")
+        cap.setWordWrap(True)
+        cap.setFont(QFont("Courier New", 7))
+        cap.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        self._lay.addWidget(cap)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(
+            f"QScrollArea {{ border: 1px solid {C.BORDER}; border-radius: 3px; "
+            f"background: transparent; }}"
+        )
+        inner = QWidget()
+        self._rows = QVBoxLayout(inner)
+        self._rows.setContentsMargins(6, 6, 6, 6)
+        self._rows.setSpacing(3)
+        self._rows.addStretch()
+        scroll.setWidget(inner)
+        scroll.setFixedHeight(262)
+        self._lay.addWidget(scroll)
+
+        self._empty = QLabel("No activity yet — events appear as the "
+                             "system works.")
+        self._empty.setFont(QFont("Courier New", 8))
+        self._empty.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        self._lay.addWidget(self._empty)
+
+        btns = QHBoxLayout(); btns.setSpacing(8)
+        clear = QPushButton("CLEAR")
+        clear.setFixedHeight(28)
+        clear.setFont(QFont("Courier New", 9))
+        clear.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px; }}
+            QPushButton:hover {{ color: {C.ACC2}; border-color: {C.ACC2}; }}
+        """)
+        clear.clicked.connect(self._on_clear)
+        btns.addWidget(clear)
+
+        close = QPushButton("CLOSE")
+        close.setFixedHeight(28)
+        close.setFont(QFont("Courier New", 9))
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px; }}
+            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+        """)
+        close.clicked.connect(self.hide)
+        btns.addWidget(close)
+        self._lay.addLayout(btns)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(700)
+        self._timer.timeout.connect(self._pull)
+        self._pull()                       # show the backlog on open
+
+    # ── live drain ─────────────────────────────────────────────────────────
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._pull()
+        self._timer.start()
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
+
+    def _pull(self):
+        """Drain rows newer than this view's cursor (GUI thread only)."""
+        if self._feed is None:
+            return
+        try:
+            rows = self._feed.drain_since(self._cursor)
+        except Exception:
+            return
+        for row in rows:
+            try:
+                self._cursor = max(self._cursor, int(row.get("seq", 0)))
+                self._add_row(row)
+            except Exception:
+                continue
+        self._empty.setVisible(self._rows.count() <= 1)   # 1 = the stretch
+
+    def _add_row(self, row: dict):
+        rtype = str(row.get("type") or "")
+        if row.get("critical") or rtype in ("tool_error", "system_error",
+                                            "user_interrupt"):
+            color = C.RED
+        elif rtype == "tool_result":
+            color = C.GREEN
+        elif rtype == "system_startup":
+            color = C.PRI
+        else:
+            color = C.TEXT_MED
+        lbl = QLabel(f"{row.get('time', '')}  {row.get('text', '')}")
+        lbl.setWordWrap(True)
+        lbl.setFont(QFont("Courier New", 7))
+        lbl.setStyleSheet(f"color: {color}; background: transparent;")
+        # insert above the trailing stretch
+        self._rows.insertWidget(self._rows.count() - 1, lbl)
+
+    def _on_clear(self):
+        if self._feed is not None:
+            try:
+                self._feed.clear()
+            except Exception:
+                pass
+        while self._rows.count():
+            item = self._rows.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        self._rows.addStretch()
+        self._empty.setVisible(True)
+
+
 class ClipboardPanel(QWidget):
     """Floating panel shown when text is copied — offers quick Jarvis actions."""
 
@@ -3755,6 +3913,8 @@ class MainWindow(QMainWindow):
         # Tray manager (installed by main.py after JarvisLive is created)
         self.tray_manager = None
         self._history_overlay = None
+        self._activity_overlay = None
+        self._activity_feed = None   # Phase 32: bound by JarvisUI at run()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
@@ -4785,6 +4945,14 @@ class MainWindow(QMainWindow):
         hist_btn.setStyleSheet(_BTN_STYLE_DIM)
         hist_btn.clicked.connect(self._open_history_panel)
         lay.addWidget(hist_btn)
+
+        act_btn = QPushButton("📡  ACTIVITY")
+        act_btn.setFixedHeight(26)
+        act_btn.setFont(QFont("Courier New", 7))
+        act_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        act_btn.setStyleSheet(_BTN_STYLE_DIM)
+        act_btn.clicked.connect(self._open_activity_panel)
+        lay.addWidget(act_btn)
 
         plugin_btn = QPushButton("🧩  PLUGINS")
         plugin_btn.setFixedHeight(26)
@@ -5946,6 +6114,14 @@ class MainWindow(QMainWindow):
         self._centre_overlay(ov)
         self._history_overlay = ov
 
+    def _open_activity_panel(self):
+        # Phase 32: the activity center — backed by the bus-fed ring bound
+        # at run(); None (tests, pre-bind) opens an honest empty view.
+        ov = ActivityOverlay(feed=getattr(self, "_activity_feed", None),
+                             parent=self.centralWidget())
+        self._centre_overlay(ov)
+        self._activity_overlay = ov
+
     # ── Irreversible-action confirmation ─────────────────────────────────────
 
     def _show_confirm_banner(self, title: str, detail: str):
@@ -6328,6 +6504,12 @@ class JarvisUI:
 
     def write_log(self, text: str):
         self._win._log_sig.emit(text)
+
+    def bind_activity_feed(self, feed) -> None:
+        """Phase 32: hand the HUD's activity overlay the bus-fed ring.
+        Called once from run(); the overlay then drains it on a GUI timer
+        (core/activity.ActivityFeed is lock-guarded for exactly this)."""
+        self._win._activity_feed = feed
 
     def wait_for_api_key(self):
         while not self._win._ready:

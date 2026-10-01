@@ -92,6 +92,7 @@ from core.viseme               import VisemeStream
 from core.vision_labels        import CAMERA, SCREEN, source_text
 from core.event_bus            import EventBus, Event, EventType, Priority
 from core.permissions          import PermissionLedger
+from core.activity             import ActivityFeed
 from core.degraded             import EndpointDetector, OfflineVoice
 from core.verifier import (
     Verifier, VerificationRule, VerificationStrategy,
@@ -783,6 +784,7 @@ class JarvisLive:
         self._dashboard     = None
         self._event_bus     = EventBus()      # M11: started in run(), not here
         self._permissions   = PermissionLedger()  # Phase 40: config/permissions.json
+        self._activity      = ActivityFeed()  # Phase 32: HUD activity ring (§3.15)
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
@@ -2755,9 +2757,18 @@ class JarvisLive:
         return True
 
     async def _bridge_event(self, event: Event) -> None:
-        """The bus' one subscriber: every event to both dashboard surfaces —
-        the /api/events ring (snapshot) and live /ws clients (push). No
-        dashboard attached is the normal state in tests, never an error."""
+        """The bus' one subscriber, feeding BOTH §3.15 consumers: the
+        activity feed (Phase 32 — the HUD overlay drains it on its own GUI
+        timer, so it fills whether or not anything is watching) and the
+        dashboard surfaces (the /api/events ring snapshot + live /ws
+        push). No dashboard attached is the normal state in tests, never an
+        error."""
+        feed = getattr(self, "_activity", None)
+        if feed is not None:
+            try:
+                feed.append(event)
+            except Exception:
+                pass
         dash = getattr(self, "_dashboard", None)
         if not dash:
             return
@@ -2996,6 +3007,15 @@ class JarvisLive:
         # stays exactly where it was; the bus rides alongside it.
         await self._event_bus.start()
         self._event_bus.subscribe_all(self._bridge_event)
+        # Phase 32: hand the HUD activity overlay its ring (guarded — the
+        # overlay pulls from it on a GUI timer; tests carry no real UI).
+        _ui = getattr(self, "ui", None)
+        _bind_activity = getattr(_ui, "bind_activity_feed", None)
+        if callable(_bind_activity):
+            try:
+                _bind_activity(self._activity)
+            except Exception:
+                pass
         self.emit_event(EventType.SYSTEM_STARTUP, source="main")
 
         _connect_n = 0
