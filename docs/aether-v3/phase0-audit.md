@@ -175,9 +175,16 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   engage a fail-soft voice bridge — mic → local Whisper → REST ladder reply
   (`gemini.call`) → offline TTS — ended the moment a session reconnects;
   dashboard text arriving with no session now answers over the REST ladder
-  instead of being dropped. The engines are optional installs: absent ones
-  degrade that step to text and log it exactly once. 19 tests in
-  `tests/test_degraded.py`.
+   instead of being dropped. The engines are optional installs: absent ones
+   degrade that step to text and log it exactly once. 19 tests in
+   `tests/test_degraded.py`.
+   **✅ env (this session):** the optional engines are now INSTALLED in
+   the venv — faster-whisper 1.2.1, vosk, edge-tts 7.2.8, kokoro 0.9.4,
+   torch 2.14.1+cpu (CPU wheel via `download.pytorch.org/whl/cpu`; the
+   default PyPI torch on Windows is the multi-GB CUDA build), with
+   sounddevice + miniaudio already present — so the degraded path has its
+   full stack instead of degrading to text. `requirements.txt` lists the
+   installs under the optional M14 block.
 
 ### 3.7 Wake word / PTT / echo guard
 - **AETHER:** `core/wake_word.py` (wired main.py:84, ui.py:5450, installer
@@ -263,6 +270,15 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   generated read-backs are hinted in the tool descriptions; `[SELF]` explains
   all five labels. 35 tests in `tests/test_vision_labels.py`, including choke
   guards that fail if any label is spelled outside the module.
+  **✅ env (this session):** the spatial engine's two recurring log errors
+  are fixed at the source. mediapipe pinned to **0.10.21** in the venv
+  (1.0.x and 0.10.30+ ship WITHOUT the legacy `mp.solutions` API —
+  `requirements.txt` now documents the pin), and `HandTracker.close()` is
+  idempotent and never raises: the old code threw twice — `_hands`
+  missing on a half-built object (Python still calls `__del__`), and
+  mediapipe's own `Closing SolutionBase._graph which is already None` on
+  a double close. Real construction + both guards covered by
+  `tests/test_hand_tracker.py`.
 
 ### 3.13 Computer / browser control & verification
 - **AETHER & Mark-LV:** identical pyautogui-based actions (AETHER supersets).

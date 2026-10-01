@@ -80,7 +80,19 @@ pynvml                       # system_monitor + the HUD's GPU meter (NVIDIA)
 #   pip install pandas       # file_processor: spreadsheet/CSV analysis
 #   pip install pydub        # file_processor: audio metadata and conversion
 #                            #   (also needs ffmpeg on PATH for most formats)
-#   pip install mediapipe    # pushup_counter: elbow-angle rep detection
+#   pip install mediapipe==0.10.21  # core/spatial + pushup_counter — PINNED:
+#                            #   0.10.30+ and 1.0.x removed the legacy
+#                            #   mp.solutions API the spatial engine uses
+#
+# ── Optional: M14 degraded/offline voice (§3.6) ───────────────────────────────
+# The engines are lazy-imported: absent ones degrade that step to text and log
+# it exactly once. Installed in the dev venv; a fresh clone may skip them.
+#   pip install faster-whisper vosk   # local STT (mic → text while offline)
+#   pip install edge-tts kokoro       # offline/cloud TTS voices
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#                            #   tensor backend for the two above — use the CPU
+#                            #   index on purpose: default PyPI torch on
+#                            #   Windows is the multi-GB CUDA build
 
 # ── Optional: local wake word ("Hey Jarvis") ──────────────────────────────────
 # Deliberately NOT installed by default — it's opt-in. Enable it (and download

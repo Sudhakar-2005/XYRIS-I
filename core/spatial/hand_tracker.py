@@ -183,9 +183,22 @@ class HandTracker:
         return annotated
 
     def close(self) -> None:
-        """Release MediaPipe resources."""
-        if self._hands:
-            self._hands.close()
+        """Release MediaPipe resources — idempotent, never raises.
+
+        Two failure modes this guards against, both seen in the logs:
+        __init__ failing before ``_hands`` exists (Python still calls
+        __del__ on that half-built object → AttributeError), and a second
+        close() on a live instance (mediapipe's SolutionBase raises
+        'Closing SolutionBase._graph which is already None'). The
+        reference is dropped first so every path ends in the same terminal
+        state, and release is best-effort: cleanup must not throw."""
+        hands = getattr(self, "_hands", None)
+        self._hands = None
+        if hands is not None:
+            try:
+                hands.close()
+            except Exception:
+                pass
 
     def __del__(self):
         self.close()
