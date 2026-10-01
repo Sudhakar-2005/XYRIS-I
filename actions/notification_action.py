@@ -175,6 +175,7 @@ def _handle_configure(manager, params: dict) -> str:
 TOOL = {
     "name": "notification_action",
     "risk": "safe",
+    "permissions": ["desktop", "messaging"],
     "timeout": 30,
     "requires_confirmation": False,
     "supports_undo": False,

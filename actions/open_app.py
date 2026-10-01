@@ -375,6 +375,7 @@ def verify_opened(args, output):
 TOOL = {
     "name": "open_app",
     "risk": "safe",
+    "permissions": ["process"],
     "timeout": 30,
     "requires_confirmation": False,
     "supports_undo": False,

@@ -363,6 +363,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
 TOOL = {
     "name": "flight_finder",
     "risk": "caution",
+    "permissions": ["network"],
     "timeout": 90,
     "requires_confirmation": False,
     "supports_undo": False,

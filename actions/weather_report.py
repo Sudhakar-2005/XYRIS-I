@@ -55,6 +55,7 @@ def _log(message: str, player=None) -> None:
 TOOL = {
     "name": "weather_report",
     "risk": "safe",
+    "permissions": ["network"],
     "timeout": 30,
     "requires_confirmation": False,
     "supports_undo": False,

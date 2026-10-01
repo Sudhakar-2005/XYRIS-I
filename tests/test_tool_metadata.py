@@ -1,7 +1,7 @@
 """AETHER-I V3 — Phase 4 tool metadata + dispatcher enforcement tests.
 
-Three layers, matching the audit (§3.9, §3.14):
-  1. Schema validation — every TOOL dict (actions + inline) declares the five
+Three layers, matching the audit (§3.9, §3.14, §3.17):
+  1. Schema validation — every TOOL dict (actions + inline) declares the six
      metadata keys with valid values, and the loader agrees.
   2. Coverage invariants — dangerous ⇒ gated, supports_undo ⇒ the file really
      pushes undo, gated tools warn the model in their description, and the
@@ -26,6 +26,7 @@ from unittest import mock
 
 import main
 from core import confirm as confirm_gate
+from core.permissions import PERMISSION_VOCAB
 from core.action_loader import (
     ActionRecord, ActionRegistry, ToolPolicy, policy_from_meta,
     RISK_LEVELS, VERIFICATION_MODES, DEFAULT_TIMEOUT_S,
@@ -36,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ACTION_FILES = sorted(p for p in (PROJECT_ROOT / "actions").glob("*.py")
                       if not p.name.startswith("_"))
 INLINE_KEYS = ("risk", "timeout", "requires_confirmation",
-               "supports_undo", "verification")
+               "supports_undo", "verification", "permissions")
 
 
 def _raw_tools() -> dict[str, tuple[str, dict]]:
@@ -99,14 +100,14 @@ def _fc(name: str, args: dict | None = None):
 
 
 class TestSchemaValidation(unittest.TestCase):
-    """Layer 1 — the five keys exist and are well-formed everywhere."""
+    """Layer 1 — the six keys exist and are well-formed everywhere."""
 
     @classmethod
     def setUpClass(cls):
         cls.tools = _raw_tools()
         cls.registry = _load_registry()
 
-    def test_every_action_tool_declares_all_five_keys(self):
+    def test_every_action_tool_declares_all_metadata_keys(self):
         self.assertGreaterEqual(len(self.tools), 21)
         for fname, (name, tool) in self.tools.items():
             for key in INLINE_KEYS:
@@ -130,7 +131,7 @@ class TestSchemaValidation(unittest.TestCase):
         declared = {d["name"] for d in main.TOOL_DECLARATIONS}
         self.assertEqual(set(main.INLINE_TOOL_META), declared)
 
-    def test_inline_entries_declare_all_five_keys_and_parse(self):
+    def test_inline_entries_declare_all_metadata_keys_and_parse(self):
         for name, meta in main.INLINE_TOOL_META.items():
             for key in INLINE_KEYS:
                 self.assertIn(key, meta, f"inline '{name}' missing '{key}'")
@@ -146,6 +147,7 @@ class TestSchemaValidation(unittest.TestCase):
             self.assertFalse(pol.requires_confirmation)
             self.assertFalse(pol.supports_undo)
             self.assertEqual(pol.verification, "none")
+            self.assertEqual(pol.permissions, ())
 
     def test_policy_from_meta_rejects_bad_values(self):
         cases = [
@@ -158,6 +160,10 @@ class TestSchemaValidation(unittest.TestCase):
             {"requires_confirmation": "yes"},
             {"supports_undo": 1},
             {"verification": "maybe"},
+            {"permissions": "network"},     # not a list
+            {"permissions": ["bogus"]},     # not in the vocabulary
+            {"permissions": [1]},           # not strings
+            {"permissions": {"a": 1}},      # not a list
         ]
         for meta in cases:
             pol, err = policy_from_meta(meta)
@@ -505,6 +511,8 @@ class TestSourceGuards(unittest.TestCase):
     def test_every_vocabulary_value_is_lowercase(self):
         self.assertEqual([v for v in RISK_LEVELS if v != v.lower()], [])
         self.assertEqual([v for v in VERIFICATION_MODES if v != v.lower()], [])
+        self.assertEqual([v for v in PERMISSION_VOCAB if v != v.lower()], [])
+        self.assertEqual(len(set(PERMISSION_VOCAB)), len(PERMISSION_VOCAB))
 
 
 if __name__ == "__main__":

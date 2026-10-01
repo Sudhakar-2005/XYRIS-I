@@ -859,6 +859,7 @@ TOOL = {
     # handler's own 1800s subprocess budget — the dispatcher's bound sits
     # just above it so only a true hang is cut.
     "risk": "safe",
+    "permissions": ["filesystem"],
     "timeout": 1900,
     "requires_confirmation": False,
     "supports_undo": False,

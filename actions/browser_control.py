@@ -1137,6 +1137,7 @@ def verify_browser(args, output):
 TOOL = {
     "name": "browser_control",
     "risk": "caution",
+    "permissions": ["desktop", "network"],
     "timeout": 120,
     "requires_confirmation": False,
     "supports_undo": False,

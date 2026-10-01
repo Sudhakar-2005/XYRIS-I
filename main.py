@@ -91,6 +91,7 @@ from core.echo                 import EchoGuard
 from core.viseme               import VisemeStream
 from core.vision_labels        import CAMERA, SCREEN, source_text
 from core.event_bus            import EventBus, Event, EventType, Priority
+from core.permissions          import PermissionLedger
 from core.degraded             import EndpointDetector, OfflineVoice
 from core.verifier import (
     Verifier, VerificationRule, VerificationStrategy,
@@ -517,28 +518,32 @@ TOOL_DECLARATIONS = [
 # ── V3 dispatch metadata for the inline tools ─────────────────────────────────
 # Parallel to TOOL_DECLARATIONS above, deliberately SEPARATE: every declaration
 # in that list goes straight to Gemini as a function_declaration, and these
-# five keys are not valid there. core.action_loader parses the same five keys
+# six keys are not valid there. core.action_loader parses the same six keys
 # out of each actions/*.py TOOL dict; this table is their inline twin, and
 # main.py's _tool_policy() reads one or the other for every dispatch.
-# (Plugins get the safe defaults — no entry, no gate.)
+# (Plugins get the safe defaults — no entry, no gate, no permissions.)
 INLINE_TOOL_META: dict[str, dict] = {
     "system_status": {
         "risk": "safe", "timeout": 30,
+        "permissions": [],
         "requires_confirmation": False, "supports_undo": False,
         "verification": "none",
     },
     "screen_process": {
         "risk": "safe", "timeout": 45,
+        "permissions": ["capture"],
         "requires_confirmation": False, "supports_undo": False,
         "verification": "none",
     },
     "close_camera": {
         "risk": "safe", "timeout": 15,
+        "permissions": ["capture"],
         "requires_confirmation": False, "supports_undo": False,
         "verification": "none",
     },
     "manage_monitor": {
         "risk": "safe", "timeout": 30,
+        "permissions": ["desktop"],
         "requires_confirmation": False, "supports_undo": False,
         "verification": "none",
     },
@@ -547,25 +552,35 @@ INLINE_TOOL_META: dict[str, dict] = {
     # computer's own shutdown/restart.
     "shutdown_jarvis": {
         "risk": "dangerous", "timeout": 30,
+        "permissions": ["process"],
         "requires_confirmation": True, "supports_undo": False,
         "verification": "none",
     },
     "save_memory": {
         "risk": "safe", "timeout": 15,
+        "permissions": ["memory"],
         "requires_confirmation": False, "supports_undo": False,
         "verification": "none",
     },
     "recall_memory": {
         "risk": "safe", "timeout": 15,
+        "permissions": ["memory"],
         "requires_confirmation": False, "supports_undo": False,
         "verification": "none",
     },
     "undo": {
         "risk": "safe", "timeout": 30,
+        "permissions": [],
         "requires_confirmation": False, "supports_undo": False,
         "verification": "none",
     },
 }
+
+# Phase 40: the fallback ledger for dispatch surfaces built without __init__
+# (`__new__`-constructed test fakes). Everything granted — identical to a
+# missing config/permissions.json, which is the pre-Phase-40 behavior. The
+# real instance created in JarvisLive.__init__ loads the config file.
+_DEFAULT_PERMISSIONS = PermissionLedger(load=False)
 
 # ── M8: post-action verification (§3.13) ─────────────────────────────────────
 # core/verifier.py has been dormant since Phase 1. It runs now, for every tool
@@ -767,6 +782,7 @@ class JarvisLive:
         self._turn_done_event: asyncio.Event | None = None
         self._dashboard     = None
         self._event_bus     = EventBus()      # M11: started in run(), not here
+        self._permissions   = PermissionLedger()  # Phase 40: config/permissions.json
         self._briefing_sent    = False          # morning briefing fires once per process
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
@@ -1489,7 +1505,8 @@ class JarvisLive:
         """Entry point for every model tool call: resolve the V3 dispatch
         policy first (Phase 17), then dispatch.
 
-        forbidden → refuse without running anything; gated → park behind
+        forbidden → refuse without running anything; a revoked permission →
+        refuse without running anything (Phase 40); gated → park behind
         core/confirm so a HUMAN presses CONFIRM and the real dispatch runs
         from the gate's worker thread; otherwise → _dispatch_tool, which
         enforces the policy's timeout.
@@ -1506,6 +1523,28 @@ class JarvisLive:
                 response={"result":
                           f"I cannot run '{name}' — it is marked forbidden "
                           f"on this system. Nothing was done."})
+
+        if policy.permissions:
+            # Phase 40: permission metadata as the enforcement layer. The
+            # ledger reads config/permissions.json; a missing file grants
+            # everything (today's behavior), a corrupt one revokes
+            # everything. Availability first, consent second: a revoked
+            # tool never reaches the confirmation gate.
+            ledger = getattr(self, "_permissions", None) or _DEFAULT_PERMISSIONS
+            denied = [p for p in policy.permissions if not ledger.is_granted(p)]
+            if denied:
+                print(f"[Policy] ⛔ {name} — refused (permission not granted: "
+                      f"{', '.join(denied)})")
+                if not self.ui.muted:
+                    self.ui.set_state("LISTENING")
+                return types.FunctionResponse(
+                    id=fc.id, name=name,
+                    response={"result":
+                              f"I cannot run '{name}' — the required "
+                              f"permission(s) are not granted on this system: "
+                              f"{', '.join(denied)}. Nothing was done. The "
+                              f"user can re-enable them in "
+                              f"config/permissions.json."})
 
         if policy.requires_confirmation:
             if (name == "shutdown_jarvis"

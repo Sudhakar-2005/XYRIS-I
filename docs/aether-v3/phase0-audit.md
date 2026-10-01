@@ -368,7 +368,24 @@ Columns: AETHER CURRENT | MARK-LV | PROBLEM | BEST PATTERN | PROPOSED V3 | FILES
   either `_auth`-gated, a documented query-token socket (`?token=` vs
   `self._tokens`), or one of the authentication-scheme endpoints (login /
   auto-login / device-login, each asserted to validate its one-time key or
-  device token). Permission-metadata-as-enforcement remains Phase 40.
+   device token). Permission-metadata-as-enforcement remains Phase 40.
+   **✅ Phase 40:** permission metadata is now the enforcement layer.
+   Every TOOL dict — 21 actions and 8 inline tools — declares
+   `permissions` from the closed vocabulary in `core/permissions.py`
+   (capture / desktop / filesystem / generation / memory / messaging /
+   network / process); `policy_from_meta` rejects anything outside it at
+   load time; `_execute_tool` refuses a tool whose permission is revoked
+   **before** the confirmation gate ever sees the call (availability
+   first, consent second). Grants are two-tier per part-17: session-only
+   changes, plus a permanent `config/permissions.json` (gitignored —
+   asserted by test). A missing config file grants everything (the
+   pre-Phase-40 behavior, so zero dispatch regression); a corrupt one
+   revokes everything (fail closed); unknown names never grant. Plugins
+   keep the safe defaults: no entry, no declared permissions, unchanged.
+   The `_DEFAULT_PERMISSIONS` fallback exists only for `__new__`-built
+   test fakes and grants everything — identical to a missing file.
+   30 tests in `tests/test_permission_enforcement.py`, and the M4
+   metadata suite now holds `permissions` as its sixth key.
 
 ### 3.18 Error recovery
 - **AETHER:** bounded retry + backoff proven in visual engine (`_RETRYABLE`,

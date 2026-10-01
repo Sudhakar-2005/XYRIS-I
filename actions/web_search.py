@@ -385,6 +385,7 @@ def web_search(
 TOOL = {
     "name": "web_search",
     "risk": "safe",
+    "permissions": ["network"],
     "timeout": 60,
     "requires_confirmation": False,
     "supports_undo": False,

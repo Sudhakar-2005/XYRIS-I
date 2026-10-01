@@ -596,6 +596,7 @@ def verify_control(args, output):
 TOOL = {
     "name": "computer_control",
     "risk": "caution",
+    "permissions": ["desktop", "capture"],
     "timeout": 45,
     "requires_confirmation": False,
     "supports_undo": False,

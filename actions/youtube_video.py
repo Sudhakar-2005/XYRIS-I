@@ -445,6 +445,7 @@ def youtube_video(
 TOOL = {
     "name": "youtube_video",
     "risk": "caution",
+    "permissions": ["network"],
     "timeout": 90,
     "requires_confirmation": False,
     "supports_undo": False,

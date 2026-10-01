@@ -272,6 +272,7 @@ TOOL = {
     # A message to another person cannot be taken back — the one thing undo
     # cannot answer for. The dispatcher parks the call behind the human gate.
     "risk": "dangerous",
+    "permissions": ["messaging"],
     "timeout": 60,
     "requires_confirmation": True,
     "supports_undo": False,

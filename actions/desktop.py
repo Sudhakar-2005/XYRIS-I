@@ -527,6 +527,7 @@ def desktop_control(
 TOOL = {
     "name": "desktop_control",
     "risk": "caution",
+    "permissions": ["filesystem", "desktop"],
     "timeout": 90,
     "requires_confirmation": False,
     "supports_undo": True,

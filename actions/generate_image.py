@@ -575,6 +575,7 @@ TOOL = {
     # before display and the saved file is re-read afterwards — the honest
     # source of the VERIFYING state (M2).
     "risk": "caution",
+    "permissions": ["network", "generation"],
     "timeout": 150,
     "requires_confirmation": False,
     "supports_undo": False,

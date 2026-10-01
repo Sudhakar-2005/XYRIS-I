@@ -611,6 +611,7 @@ def dev_agent(
 TOOL = {
     "name": "dev_agent",
     "risk": "caution",
+    "permissions": ["filesystem", "process"],
     "timeout": 600,
     "requires_confirmation": False,
     "supports_undo": False,

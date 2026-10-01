@@ -918,6 +918,7 @@ TOOL = {
     # requires_confirmation stays False and the handler keeps its finer
     # judgment. Volume/brightness/dark-mode push undo entries.
     "risk": "caution",
+    "permissions": ["desktop"],
     "timeout": 60,
     "requires_confirmation": False,
     "supports_undo": True,

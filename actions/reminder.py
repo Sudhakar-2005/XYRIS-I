@@ -341,6 +341,7 @@ def reminder(
 TOOL = {
     "name": "reminder",
     "risk": "safe",
+    "permissions": ["process", "memory"],
     "timeout": 30,
     "requires_confirmation": False,
     "supports_undo": False,

@@ -499,6 +499,7 @@ def _handle_file_type_stats(params: dict) -> str:
 TOOL = {
     "name": "file_intelligence",
     "risk": "safe",
+    "permissions": ["filesystem"],
     "timeout": 60,
     "requires_confirmation": False,
     "supports_undo": False,

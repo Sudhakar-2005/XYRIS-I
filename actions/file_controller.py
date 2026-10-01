@@ -728,6 +728,7 @@ TOOL = {
     # philosophy says reversible work runs at once and is answered later,
     # not parked behind a banner.
     "risk": "caution",
+    "permissions": ["filesystem"],
     "timeout": 120,
     "requires_confirmation": False,
     "supports_undo": True,

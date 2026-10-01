@@ -15,9 +15,10 @@ same one-file operation as writing a plugin: define ``TOOL`` and a handler.
         "handler":      open_app,                # the callable to run
     }
 
-OPTIONALLY, a TOOL may carry five V3 dispatch-metadata keys — risk, timeout,
-requires_confirmation, supports_undo, verification (see ToolPolicy below).
-They are enforced by main.py's dispatcher and are never sent to Gemini.
+OPTIONALLY, a TOOL may carry six V3 dispatch-metadata keys — risk, timeout,
+requires_confirmation, supports_undo, verification, permissions (see
+ToolPolicy below). They are enforced by main.py's dispatcher and are never
+sent to Gemini.
 
 The handler is invoked through signature introspection: it receives ``parameters``
 plus whichever of ``player`` / ``speak`` / ``response`` / ``session_memory`` it
@@ -38,13 +39,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from core.permissions import PERMISSION_VOCAB
+
 _NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 _DEFAULT_PARAMS = {"type": "OBJECT", "properties": {}}
 _CTX_KEYS = ("player", "speak", "response", "session_memory")
 
 
-# ── V3 dispatch metadata (Phase 17) ───────────────────────────────────────────
-# Every TOOL dict may carry five keys alongside name/description/parameters:
+# ── V3 dispatch metadata (Phase 17, Phase 40) ─────────────────────────────────
+# Every TOOL dict may carry six keys alongside name/description/parameters:
 #
 #   risk                  "safe" | "caution" | "dangerous" | "forbidden"
 #                         (the vocabulary of core.tool_registry.Risk, kept as
@@ -58,11 +61,16 @@ _CTX_KEYS = ("player", "speak", "response", "session_memory")
 #                         | "verifier" (core/verifier.py runs the TOOL's own
 #                         callable `verify` after dispatch — M8; declaring this
 #                         mode REQUIRES a `verify` key, and vice versa)
+#   permissions           list of capabilities the tool exercises, from
+#                         core.permissions.PERMISSION_VOCAB (Phase 40). The
+#                         dispatcher refuses the call while any of them is
+#                         revoked in the session's PermissionLedger.
 #
 # These keys are NEVER sent to Gemini: get_tool_declarations() builds the
 # function_declarations itself, so the API schema stays exactly as before and
 # the metadata remains ours to enforce. Enforcement lives in main.py's
-# _execute_tool (forbidden → refuse, gated → confirm gate, timeout → wait_for).
+# _execute_tool (forbidden → refuse, permission revoked → refuse, gated →
+# confirm gate, timeout → wait_for).
 DEFAULT_TIMEOUT_S = 60
 MIN_TIMEOUT_S = 1
 MAX_TIMEOUT_S = 3600
@@ -79,6 +87,7 @@ class ToolPolicy:
     requires_confirmation: bool = False
     supports_undo: bool = False
     verification: str = "none"
+    permissions: tuple[str, ...] = ()
 
 
 def policy_from_meta(meta: dict | None) -> tuple[Optional[ToolPolicy], str]:
@@ -118,12 +127,21 @@ def policy_from_meta(meta: dict | None) -> tuple[Optional[ToolPolicy], str]:
         errs.append(f"verification {verification!r} not one of {VERIFICATION_MODES}")
         verification = "none"
 
+    perms = meta.get("permissions", ())
+    if not isinstance(perms, (list, tuple)) or \
+            any(not isinstance(p, str) or p not in PERMISSION_VOCAB
+                for p in perms):
+        errs.append(f"permissions {perms!r} must be a list of "
+                    f"{PERMISSION_VOCAB}")
+        perms = ()
+
     if errs:
         return None, "; ".join(errs)
     return ToolPolicy(risk=risk.lower(), timeout=timeout,
                       requires_confirmation=bools["requires_confirmation"],
                       supports_undo=bools["supports_undo"],
-                      verification=verification), ""
+                      verification=verification,
+                      permissions=tuple(dict.fromkeys(perms))), ""
 
 
 # A tool may declare that the model should NOT be held up waiting for it.

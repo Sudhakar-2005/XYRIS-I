@@ -590,6 +590,7 @@ def code_helper(
 TOOL = {
     "name": "code_helper",
     "risk": "caution",
+    "permissions": ["process"],
     "timeout": 90,
     "requires_confirmation": False,
     "supports_undo": False,

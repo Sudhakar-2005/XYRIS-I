@@ -1063,6 +1063,7 @@ if __name__ == "__main__":
 TOOL = {
     "name": "game_updater",
     "risk": "caution",
+    "permissions": ["filesystem", "network", "process"],
     "timeout": 600,
     "requires_confirmation": False,
     "supports_undo": False,

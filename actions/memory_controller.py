@@ -113,6 +113,7 @@ def memory_controller(
 TOOL = {
     "name": "memory_controller",
     "risk": "caution",
+    "permissions": ["memory"],
     "timeout": 30,
     "requires_confirmation": False,
     "supports_undo": False,

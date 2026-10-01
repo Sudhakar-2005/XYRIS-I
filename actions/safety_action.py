@@ -127,6 +127,7 @@ def _handle_risk_summary() -> str:
 TOOL = {
     "name": "safety_action",
     "risk": "safe",
+    "permissions": ["memory"],
     "timeout": 30,
     "requires_confirmation": False,
     "supports_undo": False,
