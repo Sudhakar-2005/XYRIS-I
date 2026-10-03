@@ -15,3 +15,7 @@ from .schema import (  # noqa: F401
 from .capability import Capability, CapabilityCatalog  # noqa: F401
 from .validate import ValidationReport, validate  # noqa: F401
 from .risk import WorkflowRisk, analyze  # noqa: F401
+from .generator import (  # noqa: F401
+    GenerationResult, GoalModel, generate, parse_intent,
+)
+from .templates import Template, build_templates, get_template, instantiate  # noqa: F401

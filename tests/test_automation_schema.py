@@ -60,6 +60,23 @@ def make_catalog() -> CapabilityCatalog:
                               parameters={"type": "OBJECT",
                                           "properties": {}},
                               risk="safe", timeout=30, permissions=()),
+        "weather_report": Capability(
+            name="weather_report", kind="action", description="weather",
+            parameters={"type": "OBJECT",
+                        "properties": {"city": {"type": "STRING"}},
+                        "required": ["city"]},
+            risk="safe", timeout=30, permissions=("network",)),
+        "file_controller": Capability(
+            name="file_controller", kind="action", description="files",
+            parameters={"type": "OBJECT",
+                        "properties": {"action": {"type": "STRING"},
+                                       "path": {"type": "STRING"}},
+                        "required": ["action"]},
+            risk="safe", timeout=60, permissions=("filesystem",)),
+        "system_status": Capability(
+            name="system_status", kind="inline", description="system metrics",
+            parameters={"type": "OBJECT", "properties": {}},
+            risk="safe", timeout=15, permissions=()),
     }
     return cat
 
