@@ -28,7 +28,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont,
     QFontDatabase, QKeySequence, QLinearGradient, QPainter, QPainterPath,
-    QPen, QPixmap, QRadialGradient, QShortcut,
+    QPen, QPixmap, QPolygonF, QRadialGradient, QShortcut,
 )
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -3153,6 +3153,418 @@ class ActivityOverlay(_HudOverlay):
         self._empty.setVisible(True)
 
 
+# ── Automation V0.1 (Phase 10) ─────────────────────────────────────────────
+# Read-only inspection: the model CREATES and RUNS automations; this panel
+# only shows what the store holds — list, layered graph, recent runs.
+
+_AUTOMATION_TYPE_COLOR = {
+    "TRIGGER": "#00d4ff", "TOOL": "#00ff88", "AI": "#ff6b00",
+    "CONDITION": "#ffd166", "LOOP": "#b388ff", "DELAY": "#5ab8cc",
+    "APPROVAL": "#ff3355", "MEMORY": "#8ffcff", "TRANSFORM": "#5ab8cc",
+    "NOTIFICATION": "#007a99", "VERIFICATION": "#00ff88", "END": "#3a8a9a",
+}
+
+
+class AutomationCanvas(QWidget):
+    """Layered, read-only graph of one workflow (trigger → steps → end).
+
+    Pure paintEvent; no interaction — editing belongs to the model tool, so
+    what the user sees here is exactly what the store recorded, nothing more.
+    """
+
+    _NW, _NH, _GAP, _M = 108, 36, 34, 16
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._wf = None
+        self.setMinimumSize(360, 300)
+        self.setStyleSheet(
+            f"background: #000407; border: 1px solid {C.BORDER}; "
+            f"border-radius: 3px;")
+
+    def set_workflow(self, wf) -> None:
+        self._wf = wf
+        self.update()
+
+    # ------------------------------------------------------------- layout
+    def _layout(self):
+        """{node_id: (col, row)} for main-graph nodes + body chips per loop."""
+        wf = self._wf
+        if wf is None:
+            return {}, {}, []
+        try:
+            body = set(str(b) for b in wf.loop_body_ids())
+        except Exception:
+            body = set()
+        nodes = [n for n in wf.nodes if n.id not in body]
+        outs: dict = {}
+        for e in getattr(wf, "edges", []) or []:
+            outs.setdefault(e.source, []).append(e)
+        trig = next((n for n in nodes if n.type == "TRIGGER"), None)
+        depth: dict = {}
+        if trig is not None:
+            depth[trig.id] = 0
+            queue = [trig.id]
+            while queue:
+                cur = queue.pop(0)
+                for e in outs.get(cur, ()):
+                    if e.target not in depth:
+                        depth[e.target] = depth[cur] + 1
+                        queue.append(e.target)
+        cols: dict = {}
+        order: dict = {}
+        for i, n in enumerate(nodes):
+            col = depth.get(n.id, -1)          # -1 = detached (drawn last)
+            order[n.id] = i
+            cols.setdefault(col, []).append(n)
+        for col in cols:
+            cols[col].sort(key=lambda n: order[n.id])
+        pos = {}
+        for ci, col_key in enumerate(sorted(c for c in cols if c >= 0)):
+            for ri, n in enumerate(cols[col_key]):
+                pos[n.id] = (ci, ri)
+        if -1 in cols:
+            ci = (max(pos[p][0] for p in pos) + 1) if pos else 0
+            for ri, n in enumerate(cols[-1]):
+                pos[n.id] = (ci, ri)
+        chips = []
+        for n in wf.nodes:
+            if n.id in body or n.type != "LOOP":
+                continue
+            ids = [str(b) for b in (n.config.get("body") or [])]
+            chips.append((n.id, ids))
+        return pos, {n.id: n for n in wf.nodes}, chips
+
+    def _xy(self, pos: dict, nid: str):
+        if nid not in pos:
+            return None
+        c, r = pos[nid]
+        return (self._M + c * (self._NW + self._GAP),
+                30 + r * (self._NH + 14))
+
+    # ------------------------------------------------------------- painting
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QColor("#000407"))
+        if self._wf is None:
+            p.setPen(QColor(C.TEXT_DIM))
+            p.setFont(QFont("Courier New", 8))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                       "Select an automation to see its graph")
+            return
+        pos, by_id, chips = self._layout()
+        if not pos:
+            p.setPen(QColor(C.TEXT_DIM))
+            p.setFont(QFont("Courier New", 8))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                       "This workflow has no nodes")
+            return
+        cols = max(c for c, _ in pos.values()) + 1
+        w, h = self.width(), self.height()
+        p.setFont(QFont("Courier New", 6))
+        for c in range(cols):
+            x = self._M + c * (self._NW + self._GAP)
+            p.setPen(QColor(24, 40, 52))
+            p.setBrush(QColor(0, 10, 16, 110 if c % 2 == 0 else 60))
+            p.drawRoundedRect(QRectF(x - 6, 6, self._NW + 12, h - 12), 4, 4)
+            label = "TRIGGER" if c == 0 else ("END" if c == cols - 1
+                                               and cols > 1 else "STEPS")
+            p.setPen(QColor(C.TEXT_DIM))
+            p.drawText(QRectF(x - 6, 8, self._NW + 12, 14),
+                       Qt.AlignmentFlag.AlignHCenter, label)
+
+        # edges first (under the boxes)
+        p.setPen(QPen(QColor(C.PRI_DIM), 1))
+        for e in getattr(self._wf, "edges", []) or []:
+            a, b = self._xy(pos, e.source), self._xy(pos, e.target)
+            if not a or not b:
+                continue
+            x1, y1 = a[0] + self._NW, a[1] + self._NH // 2
+            x2, y2 = b[0], b[1] + self._NH // 2
+            p.drawLine(QLineF(x1, y1, x2, y2))
+            p.setBrush(QColor(C.PRI_DIM))
+            p.setPen(Qt.PenStyle.NoPen)
+            tri = QPolygonF([QPointF(x2, y2), QPointF(x2 - 6, y2 - 4),
+                             QPointF(x2 - 6, y2 + 4)])
+            p.drawPolygon(tri)
+            p.setPen(QPen(QColor(C.PRI_DIM), 1))
+            if e.when:
+                p.setPen(QColor(C.TEXT_DIM))
+                p.setFont(QFont("Courier New", 6))
+                p.drawText(QRectF((x1 + x2) / 2 - 16, (y1 + y2) / 2 - 14,
+                                  32, 12),
+                           Qt.AlignmentFlag.AlignHCenter, e.when)
+                p.setPen(QPen(QColor(C.PRI_DIM), 1))
+
+        # nodes
+        for nid, (c, r) in pos.items():
+            n = by_id.get(nid)
+            if n is None:
+                continue
+            x = self._M + c * (self._NW + self._GAP)
+            y = 30 + r * (self._NH + 14)
+            color = _AUTOMATION_TYPE_COLOR.get(n.type, C.TEXT_MED)
+            p.setBrush(QColor(0, 6, 10, 240))
+            border = color
+            if getattr(n, "risk", "") in ("dangerous", "forbidden"):
+                border = C.ACC if n.risk == "dangerous" else C.RED
+            p.setPen(QPen(QColor(border), 1.4))
+            p.drawRoundedRect(QRectF(x, y, self._NW, self._NH), 5, 5)
+            p.setPen(QColor(color))
+            p.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+            p.drawText(QRectF(x + 4, y + 3, self._NW - 8, 12),
+                       Qt.AlignmentFlag.AlignLeft, n.type)
+            p.setPen(QColor(C.TEXT))
+            p.setFont(QFont("Courier New", 7))
+            title = (n.name or n.id)[:16]
+            p.drawText(QRectF(x + 4, y + 16, self._NW - 8, 16),
+                       Qt.AlignmentFlag.AlignLeft, title)
+
+        # loop body chips (nodes that live in a LOOP config, not the main graph)
+        for loop_id, ids in chips:
+            a = self._xy(pos, loop_id)
+            if not a or not ids:
+                continue
+            p.setPen(QPen(QColor("#b388ff"), 1))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setFont(QFont("Courier New", 6))
+            rect = QRectF(a[0], a[1] + self._NH + 4, self._NW, 16)
+            p.drawRoundedRect(rect, 3, 3)
+            p.drawText(rect.adjusted(4, 0, -4, 0),
+                       Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                       f"body: {len(ids)}")
+        p.end()
+
+
+class AutomationOverlay(_HudOverlay):
+    """The automations panel: store list (left) · layered graph (right) ·
+    recent runs (bottom). Polls the store on a GUI timer — AutomationStore
+    is atomic-write file storage, so reads are safe from this thread."""
+
+    _OW, _OH = 720, 470
+
+    def __init__(self, store=None, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            AutomationOverlay {{
+                background: rgba(0, 6, 10, 246);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+        self.setFixedSize(self._OW, self._OH)
+        self._store = store
+        self._selected = None
+        self._wf = None
+
+        self._lay = QVBoxLayout(self)
+        self._lay.setContentsMargins(16, 12, 16, 10)
+        self._lay.setSpacing(5)
+
+        hdr = QLabel("🔗  AUTOMATIONS")
+        hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        self._lay.addWidget(hdr)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
+        self._lay.addWidget(sep)
+
+        self._info = QLabel("No automation selected.")
+        self._info.setWordWrap(True)
+        self._info.setFont(QFont("Courier New", 7))
+        self._info.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        self._lay.addWidget(self._info)
+
+        body = QHBoxLayout()
+        body.setSpacing(8)
+
+        left = QWidget()
+        left.setFixedWidth(210)
+        left_lay = QVBoxLayout(left)
+        left_lay.setContentsMargins(0, 0, 0, 0)
+        left_lay.setSpacing(3)
+        cap = QLabel("SAVED")
+        cap.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        cap.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        left_lay.addWidget(cap)
+        lscroll = QScrollArea()
+        lscroll.setWidgetResizable(True)
+        lscroll.setStyleSheet(
+            f"QScrollArea {{ border: 1px solid {C.BORDER}; "
+            f"border-radius: 3px; background: transparent; }}")
+        linner = QWidget()
+        self._list_rows = QVBoxLayout(linner)
+        self._list_rows.setContentsMargins(6, 6, 6, 6)
+        self._list_rows.setSpacing(3)
+        self._list_rows.addStretch()
+        lscroll.setWidget(linner)
+        left_lay.addWidget(lscroll)
+        body.addWidget(left)
+
+        self._canvas = AutomationCanvas()
+        body.addWidget(self._canvas, 1)
+        self._lay.addLayout(body, 1)
+
+        rcap = QLabel("RECENT RUNS")
+        rcap.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        rcap.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        self._lay.addWidget(rcap)
+        rscroll = QScrollArea()
+        rscroll.setWidgetResizable(True)
+        rscroll.setMaximumHeight(96)
+        rscroll.setStyleSheet(
+            f"QScrollArea {{ border: 1px solid {C.BORDER}; "
+            f"border-radius: 3px; background: transparent; }}")
+        rinner = QWidget()
+        self._run_rows = QVBoxLayout(rinner)
+        self._run_rows.setContentsMargins(6, 6, 6, 6)
+        self._run_rows.setSpacing(2)
+        self._run_rows.addStretch()
+        rscroll.setWidget(rinner)
+        self._lay.addWidget(rscroll)
+
+        close = QPushButton("CLOSE")
+        close.setFixedHeight(24)
+        close.setFont(QFont("Courier New", 7))
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.setStyleSheet(f"""
+            QPushButton {{ background: #00091a; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px; }}
+            QPushButton:hover {{ border-color: {C.PRI}; color: {C.PRI}; }}
+        """)
+        close.clicked.connect(self.hide)
+        self._lay.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(2500)
+        self._timer.timeout.connect(self._pull)
+        self._pull()
+
+    # ------------------------------------------------------------ lifecycle
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._pull()
+        self._timer.start()
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
+
+    # ---------------------------------------------------------------- data
+    def _call(self, name, *args, default=None):
+        if self._store is None:
+            return default
+        try:
+            return getattr(self._store, name)(*args)
+        except Exception:
+            return default
+
+    def _pull(self):
+        items = self._call("list", default=[]) or []
+        if self._selected is not None and \
+                not any(str(i.get("id")) == self._selected for i in items):
+            self._selected = None
+            self._wf = None
+        self._rebuild_list(items)
+        if self._selected is None and items:
+            self._select(str(items[0].get("id")))
+        elif self._selected is not None:
+            self._wf = self._call("load", self._selected)
+            self._canvas.set_workflow(self._wf)
+            self._render_info()
+            self._render_runs()
+
+    def _rebuild_list(self, items):
+        while self._list_rows.count():
+            it = self._list_rows.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        if not items:
+            empty = QLabel("No automations yet — ask JARVIS to design one.")
+            empty.setWordWrap(True)
+            empty.setFont(QFont("Courier New", 7))
+            empty.setStyleSheet(
+                f"color: {C.TEXT_DIM}; background: transparent;")
+            self._list_rows.addWidget(empty)
+        else:
+            style = f"""
+                QPushButton {{ background: transparent; border: none;
+                    color: {C.TEXT}; text-align: left; padding: 3px 4px;
+                    font: 7pt 'Courier New'; }}
+                QPushButton:hover {{ color: {C.PRI}; }}
+            """
+            for it in items[:25]:
+                wid = str(it.get("id") or "")
+                status = str(it.get("status") or "")
+                btn = QPushButton(f"{str(it.get('name') or wid)[:20]}\n"
+                                  f"  {status} · {it.get('trigger', '')}")
+                btn.setStyleSheet(style)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.clicked.connect(lambda _=False, w=wid: self._select(w))
+                self._list_rows.addWidget(btn)
+        self._list_rows.addStretch()
+
+    def _select(self, wf_id):
+        self._selected = wf_id
+        self._wf = self._call("load", wf_id)
+        self._canvas.set_workflow(self._wf)
+        self._render_info()
+        self._render_runs()
+
+    def _render_info(self):
+        wf = self._wf
+        if wf is None:
+            self._info.setText("No automation selected."
+                               if self._store is None else
+                               "Selected automation could not be loaded.")
+            self._canvas.set_workflow(None)
+            return
+        stats = getattr(wf, "statistics", None) or {}
+        self._info.setText(
+            f"{wf.name} ({wf.id}) — {wf.status} · v{wf.version} · "
+            f"trigger: {wf.trigger.type} {wf.trigger.config or ''} · "
+            f"runs {stats.get('runs', 0)} · failed {stats.get('failed', 0)}\n"
+            f"{wf.description or ''}")
+
+    def _render_runs(self):
+        while self._run_rows.count():
+            it = self._run_rows.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        runs = []
+        if self._selected:
+            runs = self._call("list_runs", self._selected, 5,
+                              default=[]) or []
+        if not runs:
+            lbl = QLabel("No runs recorded for this automation yet.")
+            lbl.setFont(QFont("Courier New", 7))
+            lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            self._run_rows.addWidget(lbl)
+        else:
+            for r in runs:
+                status = str(r.get("status") or "")
+                color = (C.GREEN if status == "COMPLETED" else
+                         C.RED if status in ("FAILED", "CANCELLED") else
+                         C.PRI if status in ("DRY_RUN", "WAITING_APPROVAL")
+                         else C.TEXT_MED)
+                ms = r.get("duration_ms")
+                dur = f"{int(ms) // 1000}s" if isinstance(ms, (int, float)) \
+                    else "-"
+                lbl = QLabel(f"{r.get('run_id')}  {status}  "
+                             f"{r.get('trigger', '')}  {dur}")
+                lbl.setFont(QFont("Courier New", 7))
+                lbl.setStyleSheet(f"color: {color}; background: transparent;")
+                self._run_rows.addWidget(lbl)
+        self._run_rows.addStretch()
+
+
 class ClipboardPanel(QWidget):
     """Floating panel shown when text is copied — offers quick Jarvis actions."""
 
@@ -3915,6 +4327,8 @@ class MainWindow(QMainWindow):
         self._history_overlay = None
         self._activity_overlay = None
         self._activity_feed = None   # Phase 32: bound by JarvisUI at run()
+        self._automation_overlay = None
+        self._automation_store = None  # Phase 10: bound by JarvisUI at run()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
@@ -4953,6 +5367,14 @@ class MainWindow(QMainWindow):
         act_btn.setStyleSheet(_BTN_STYLE_DIM)
         act_btn.clicked.connect(self._open_activity_panel)
         lay.addWidget(act_btn)
+
+        auto_btn = QPushButton("🔗  AUTOMATIONS")
+        auto_btn.setFixedHeight(26)
+        auto_btn.setFont(QFont("Courier New", 7))
+        auto_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        auto_btn.setStyleSheet(_BTN_STYLE_DIM)
+        auto_btn.clicked.connect(self._open_automation_panel)
+        lay.addWidget(auto_btn)
 
         plugin_btn = QPushButton("🧩  PLUGINS")
         plugin_btn.setFixedHeight(26)
@@ -6122,6 +6544,14 @@ class MainWindow(QMainWindow):
         self._centre_overlay(ov)
         self._activity_overlay = ov
 
+    def _open_automation_panel(self):
+        # Phase 10: automations — read-only view over the engine's store,
+        # bound at run(); None (tests, pre-bind) opens an honest empty view.
+        ov = AutomationOverlay(store=getattr(self, "_automation_store", None),
+                               parent=self.centralWidget())
+        self._centre_overlay(ov)
+        self._automation_overlay = ov
+
     # ── Irreversible-action confirmation ─────────────────────────────────────
 
     def _show_confirm_banner(self, title: str, detail: str):
@@ -6510,6 +6940,12 @@ class JarvisUI:
         Called once from run(); the overlay then drains it on a GUI timer
         (core/activity.ActivityFeed is lock-guarded for exactly this)."""
         self._win._activity_feed = feed
+
+    def bind_automation_store(self, store) -> None:
+        """Phase 10: hand the HUD's automations overlay the engine store.
+        Called once from run(); the overlay polls it on a GUI timer
+        (AutomationStore is atomic-write file storage — safe to read)."""
+        self._win._automation_store = store
 
     def wait_for_api_key(self):
         while not self._win._ready:

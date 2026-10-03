@@ -28,6 +28,17 @@ _KIND_LABELS = {
     "emergency_stop": "Emergency stop — mic muted from the dashboard",
     "degraded_start": "Degraded mode engaged — offline voice fallback (§3.6)",
     "degraded_end":   "Degraded mode ended — live session reconnected",
+    # Automation V0.1 (Phase 12) — run-level lifecycle from
+    # core/automation/runtime.py (node-level detail stays in run records).
+    "run_started":           "Automation run started",
+    "run_completed":         "Automation run completed",
+    "run_failed":            "Automation run failed",
+    "run_cancelled":         "Automation run cancelled",
+    "run_paused":            "Automation run paused",
+    "run_resumed":           "Automation run resumed",
+    "run_waiting_approval":  "Automation run waiting for approval",
+    "run_dry_run":           "Automation dry run finished",
+    "approval_waiting":      "Automation needs confirmation on screen",
 }
 
 _ERROR_TYPES = frozenset({"tool_error", "system_error", "user_interrupt"})
@@ -40,7 +51,12 @@ def summarize(event_type: str, source: str, data: dict | None) -> str:
     if kind == "emergency_stop" or event_type == "user_interrupt":
         return _KIND_LABELS["emergency_stop"]
     if kind in _KIND_LABELS:
-        return _KIND_LABELS[kind]
+        label = _KIND_LABELS[kind]
+        if kind.startswith(("run_", "approval_")):
+            name = str(data.get("name") or "")
+            if name:
+                label = f"{label} — {name}"
+        return label
     if kind:
         return kind.replace("_", " ").capitalize()
     if event_type in ("tool_result", "tool_error"):

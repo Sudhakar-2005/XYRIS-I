@@ -2817,6 +2817,12 @@ class JarvisLive:
             pass
 
     def _automation_emit(self, kind: str, payload: dict, run_id: str) -> None:
+        # Phase 12: the activity feed gets run-level lifecycle only —
+        # per-node detail would flood it, and it already lives in the run
+        # record (config/automations/runs/…) and the automations panel.
+        kind = str(kind or "")
+        if not (kind.startswith("run_") or kind == "approval_waiting"):
+            return
         self.emit_event(EventType.CUSTOM, source="automation",
                         data=dict(payload or {}),
                         correlation_id=str(run_id or ""))
@@ -3079,6 +3085,14 @@ class JarvisLive:
         if callable(_bind_activity):
             try:
                 _bind_activity(self._activity)
+            except Exception:
+                pass
+        # Phase 10: the automations panel reads the engine's store directly.
+        _bind_auto = getattr(_ui, "bind_automation_store", None)
+        if callable(_bind_auto):
+            try:
+                _bind_auto(self._automation.store
+                           if getattr(self, "_automation", None) else None)
             except Exception:
                 pass
         self.emit_event(EventType.SYSTEM_STARTUP, source="main")
