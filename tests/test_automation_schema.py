@@ -55,6 +55,11 @@ def make_catalog() -> CapabilityCatalog:
                                    permissions=("messaging",)),
         "broken_tool": Capability(name="broken_tool", kind="action",
                                   description="x", available=False),
+        "generic": Capability(name="generic", kind="action",
+                              description="generic no-param tool",
+                              parameters={"type": "OBJECT",
+                                          "properties": {}},
+                              risk="safe", timeout=30, permissions=()),
     }
     return cat
 
