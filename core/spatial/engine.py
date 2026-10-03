@@ -230,7 +230,7 @@ class SpatialInteractionEngine:
 
                 # Recognize gesture
                 now = time.time()
-                event = self._recognizer.hands_to_event(hands, now) if hands else GestureEvent(
+                event = self._recognizer.recognize(hands, now) if hands else GestureEvent(
                     gesture=GestureType.NONE,
                     confidence=0.0,
                     timestamp=now,
