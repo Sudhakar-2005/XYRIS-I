@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -58,6 +59,8 @@ class AutomationEngine:
         self.triggers = TriggerEngine(self.store)
         self.tick_interval_s = tick_interval_s
         self._started_at = time.time()
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self._ticker: asyncio.Task | None = None
 
     # -------------------------------------------------------- capability
 
@@ -149,12 +152,8 @@ class AutomationEngine:
 
     # -------------------------------------------------------------- runs
 
-    async def run(self, wf_id: str, *, mode: str = "live",
-                  trigger: str = "manual",
-                  variables: dict | None = None) -> RunRecord:
-        wf = self.store.load(wf_id)
-        if wf is None:
-            raise KeyError(f"automation {wf_id!r} not found")
+    def _require_runnable(self, wf: Workflow) -> None:
+        """Validation + permission gate shared by run() and start_run()."""
         report = self.validate(wf)
         if not report.valid:
             raise ValueError("workflow is not valid: " +
@@ -164,8 +163,36 @@ class AutomationEngine:
                                   ", ".join(report.denied_permissions))
         if wf.status == WorkflowStatus.RUNNING.value:
             raise RuntimeError("workflow is already running")
+
+    async def run(self, wf_id: str, *, mode: str = "live",
+                  trigger: str = "manual",
+                  variables: dict | None = None,
+                  run_id: str | None = None) -> RunRecord:
+        wf = self.store.load(wf_id)
+        if wf is None:
+            raise KeyError(f"automation {wf_id!r} not found")
+        self._require_runnable(wf)
         return await self.runtime.execute(
-            wf, mode=mode, trigger=trigger, variables=variables)
+            wf, run_id=run_id, mode=mode, trigger=trigger,
+            variables=variables)
+
+    def start_run(self, wf_id: str, *, mode: str = "live",
+                  trigger: str = "manual",
+                  variables: dict | None = None) -> str:
+        """Schedule a run on the engine loop from any thread; returns the
+        run_id immediately after fast-failing on not-found/invalid/denied."""
+        wf = self.store.load(wf_id)
+        if wf is None:
+            raise KeyError(f"automation {wf_id!r} not found")
+        self._require_runnable(wf)
+        loop = self.loop
+        if loop is None or loop.is_closed():
+            raise RuntimeError("automation engine loop is not running yet")
+        run_id = f"run_{uuid.uuid4().hex[:12]}"
+        asyncio.run_coroutine_threadsafe(
+            self.run(wf_id, mode=mode, trigger=trigger,
+                     variables=variables, run_id=run_id), loop)
+        return run_id
 
     async def test(self, wf_id: str) -> RunRecord:
         return await self.run(wf_id, mode="dry", trigger="test")
@@ -205,6 +232,9 @@ class AutomationEngine:
 
     def start_ticker(self, emit_log: Callable | None = None) -> None:
         """Spawn the background tick loop (call from the asyncio thread)."""
+        loop = asyncio.get_running_loop()
+        self.loop = loop
+
         async def _loop() -> None:
             while True:
                 try:
@@ -214,7 +244,7 @@ class AutomationEngine:
                     raise
                 except Exception as exc:                            # noqa: BLE001
                     self._log(f"[Automation] tick error: {exc}")
-        asyncio.get_running_loop().create_task(_loop())
+        self._ticker = loop.create_task(_loop())
 
     # ------------------------------------------------------ introspection
 

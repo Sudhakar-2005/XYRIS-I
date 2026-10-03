@@ -837,6 +837,47 @@ class JarvisLive:
         self.ui.get_plugin_settings = self._plugin_registry.settings_schemas  # ⚙ settings tab
         self.ui.request_say = self.plugin_say   # plugins: mid-task speech channel
 
+        # ── Automation Intelligence V0.1 (Phase 7) ─────────────────────────
+        # One engine, injected with the EXISTING systems (dispatcher gate,
+        # confirm banner, gemini, memory, notifications, event bus). Any
+        # failure here degrades automation to "unavailable" — it must never
+        # take the app down.
+        self._automation = None
+        try:
+            from core.automation.engine import AutomationEngine, set_engine
+            from core.automation.adapters import (
+                build_ai_call, build_confirm, build_memory_recall,
+                build_memory_save, build_notify, build_tool_call,
+            )
+            from memory.memory_manager import remember as _mem_remember, \
+                search_memory as _mem_search
+            _aconfirm = build_confirm(request=confirm_gate.request,
+                                      pending=confirm_gate.pending_title)
+            self._automation = AutomationEngine(
+                ledger=self._permissions,
+                tool_call=build_tool_call(
+                    dispatch=self._dispatch_tool,
+                    policy_of=self._tool_policy,
+                    confirm=_aconfirm,
+                    ledger=self._permissions,
+                    pending=confirm_gate.pending_title),
+                confirm=_aconfirm,
+                ai_call=build_ai_call(),
+                memory_save=build_memory_save(_mem_remember),
+                memory_recall=build_memory_recall(_mem_search),
+                notify=self._automation_notify,
+                emit=self._automation_emit,
+                log=lambda m: print(m),
+            )
+            set_engine(self._automation)
+            self._automation.refresh_catalog(self._action_registry,
+                                             self._plugin_registry,
+                                             INLINE_TOOL_META)
+            print("[Automation] engine ready")
+        except Exception as e:
+            print(f"[Automation] engine disabled: {e}")
+            self._automation = None
+
         # ── Persona Engine ────────────────────────────────────────────────
         from core.persona_registry import PersonaRegistry
         from memory.config_manager import get_active_persona as _get_persona_cfg
@@ -2738,7 +2779,8 @@ class JarvisLive:
 
     def emit_event(self, event_type: EventType, *, source: str = "jarvis",
                    data: dict | None = None,
-                   priority: Priority = Priority.NORMAL) -> bool:
+                   priority: Priority = Priority.NORMAL,
+                   correlation_id: str = "") -> bool:
         """Fire-and-forget onto the wired bus. Never raises and never blocks:
         observability must not be able to break the thing it observes. When
         the bus isn't running (early startup, tests built via __new__) the
@@ -2753,8 +2795,31 @@ class JarvisLive:
             return False
         evt = Event(priority=priority, event_type=event_type,
                     source=source, data=data or {})
+        if correlation_id:
+            evt.correlation_id = correlation_id
         loop.create_task(bus.publish(evt))
         return True
+
+    # ── Automation V0.1: engine → notification / event-bus adapters ────────
+
+    def _automation_notify(self, message: str) -> None:
+        try:
+            from core.notification_manager import get_notification_manager
+            get_notification_manager().notify(
+                category="automation", title="Automation",
+                message=str(message)[:500])
+            return
+        except Exception:
+            pass
+        try:
+            self.ui.show_content("Automation", str(message)[:4000])
+        except Exception:
+            pass
+
+    def _automation_emit(self, kind: str, payload: dict, run_id: str) -> None:
+        self.emit_event(EventType.CUSTOM, source="automation",
+                        data=dict(payload or {}),
+                        correlation_id=str(run_id or ""))
 
     async def _bridge_event(self, event: Event) -> None:
         """The bus' one subscriber, feeding BOTH §3.15 consumers: the
@@ -3017,6 +3082,18 @@ class JarvisLive:
             except Exception:
                 pass
         self.emit_event(EventType.SYSTEM_STARTUP, source="main")
+
+        # Automation V0.1: scheduler starts once the loop + bus are live and
+        # survives reconnects (plain task, outside the session TaskGroup).
+        if getattr(self, "_automation", None) is not None:
+            try:
+                self._automation.refresh_catalog(
+                    self._action_registry, self._plugin_registry,
+                    INLINE_TOOL_META)
+                self._automation.start_ticker()
+                print("[Automation] scheduler started")
+            except Exception as e:
+                print(f"[Automation] scheduler failed: {e}")
 
         _connect_n = 0
         while True:

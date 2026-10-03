@@ -19,7 +19,7 @@ from .schema import (
     MAX_NODES, MAX_NODE_TIMEOUT_S, MIN_NODE_TIMEOUT_S,
 )
 from .validate import (
-    INVALID, REQUIRES_CLARIFICATION, VALID,
+    INVALID, REQUIRES_CLARIFICATION, REQUIRES_PERMISSION, VALID,
     ValidationReport, normalize_ids, validate,
 )
 
@@ -391,6 +391,15 @@ def generate(text: str, catalog: CapabilityCatalog, ai_json: AiJson, *,
                                         report=report, goal=goal,
                                         capability_report=_capability_report(
                                             report))
+            if report.status == REQUIRES_PERMISSION:
+                # not a drafting problem — tell the caller who must grant what
+                return GenerationResult(
+                    status=INVALID, goal=goal, report=report,
+                    capability_report=_capability_report(report),
+                    errors=["missing permissions: " +
+                            ", ".join(report.denied_permissions) +
+                            " — ask the user to grant them in "
+                            "config/permissions.json"])
             errors = []          # repairable — retry once with the errors
 
     # ---- one repair round -------------------------------------------------
@@ -420,6 +429,14 @@ def generate(text: str, catalog: CapabilityCatalog, ai_json: AiJson, *,
         return GenerationResult(status=VALID, workflow=wf2, report=report2,
                                 goal=goal,
                                 capability_report=_capability_report(report2))
+    if report2.status == REQUIRES_PERMISSION:
+        return GenerationResult(
+            status=INVALID, goal=goal, report=report2,
+            capability_report=_capability_report(report2),
+            errors=["missing permissions: " +
+                    ", ".join(report2.denied_permissions) +
+                    " — ask the user to grant them in "
+                    "config/permissions.json"])
     return GenerationResult(status=INVALID, goal=goal, report=report2,
                             capability_report=_capability_report(report2),
                             errors=list(report2.errors))
