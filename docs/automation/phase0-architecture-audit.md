@@ -119,3 +119,7 @@ Engine never imports `main`/`ui`; all dependencies injected → testable with `_
 `automation-v0-audit` (this report) → `-schema` (Phases 1-4) → `-runtime` (Phase 5 + 8) →
 `-generator` (Phase 6) → `-security` (Phase 7 + 13) → `-store` (Phase 9) →
 `-ui` (Phase 10 + 12) → `-voice` (Phase 11) → `-release` (Phase 14 regression).
+
+*As delivered:* phases were consolidated into fewer commits — `-runtime` and
+`-store` both point at `6e5de37` (Phases 5+8+9), `-ui` and `-voice` both at
+`e7bec45` (Phases 10+11+12). Every phase in this map is reachable from its tag.
