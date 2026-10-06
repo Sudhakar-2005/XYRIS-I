@@ -3170,21 +3170,81 @@ class AutomationCanvas(QWidget):
 
     Pure paintEvent; no interaction — editing belongs to the model tool, so
     what the user sees here is exactly what the store recorded, nothing more.
+    Picking a new workflow plays a short creation reveal: column bands fade
+    up, nodes cascade left-to-right with a scale/slide and an edge glow, each
+    edge draws in behind its source node, and the trigger fires an expanding
+    halo. Once settled, a slow packet pulse flows along the edges while the
+    canvas is visible.
     """
 
     _NW, _NH, _GAP, _M = 108, 36, 34, 16
+    _ENTR = 1150.0                 # entrance duration, ms
+    _TICK = 33                     # entrance tick, ms
+    _FLOW_PERIOD = 12.0            # packet dash period, px
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._wf = None
+        self._t = 1.0               # entrance progress 0..1 (1 = settled)
+        self._flow = 0.0            # packet dash offset
+        self._anim = QTimer(self)
+        self._anim.setInterval(self._TICK)
+        self._anim.timeout.connect(self._anim_tick)
+        self._flow_t = QTimer(self)
+        self._flow_t.setInterval(45)
+        self._flow_t.timeout.connect(self._flow_tick)
         self.setMinimumSize(360, 300)
         self.setStyleSheet(
             f"background: #000407; border: 1px solid {C.BORDER}; "
             f"border-radius: 3px;")
 
     def set_workflow(self, wf) -> None:
+        prev = getattr(self._wf, "id", None)
+        cur = getattr(wf, "id", None) if wf is not None else None
         self._wf = wf
+        if wf is None:
+            self._anim.stop()
+            self._flow_t.stop()
+            self._t, self._flow = 1.0, 0.0
+        elif cur != prev:           # new workflow (creation / selection)
+            self._t, self._flow = 0.0, 0.0
+            self._flow_t.stop()
+            self._anim.start()
         self.update()
+
+    # ---------------------------------------------------------- animation
+    @staticmethod
+    def _ease(p):
+        p = 0.0 if p < 0 else (1.0 if p > 1 else p)
+        return 1.0 - (1.0 - p) ** 3
+
+    @staticmethod
+    def _alpha(color, a):
+        qc = QColor(color)
+        qc.setAlphaF(0.0 if a < 0 else (1.0 if a > 1 else a))
+        return qc
+
+    def _anim_tick(self):
+        self._t = min(1.0, self._t + self._TICK / self._ENTR)
+        if self._t >= 1.0:
+            self._anim.stop()
+            if self.isVisible():
+                self._flow_t.start()
+        self.update()
+
+    def _flow_tick(self):
+        self._flow = (self._flow + 0.6) % self._FLOW_PERIOD
+        self.update()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if self._wf is not None and self._t >= 1.0 \
+                and not self._flow_t.isActive():
+            self._flow_t.start()
+
+    def hideEvent(self, e):
+        self._flow_t.stop()
+        super().hideEvent(e)
 
     # ------------------------------------------------------------- layout
     def _layout(self):
@@ -3262,71 +3322,108 @@ class AutomationCanvas(QWidget):
             return
         cols = max(c for c, _ in pos.values()) + 1
         w, h = self.width(), self.height()
+        t = self._t
+        stag = 0.45 / max(1, cols - 1) if cols > 1 else 0.0
+        prog = {nid: self._ease((t - stag * c) / 0.55)
+                for nid, (c, _r) in pos.items()}
+        band = 0.25 + 0.75 * self._ease(min(1.0, t * 2.5))
+        flow_on = t >= 1.0 and self._flow_t.isActive()
         p.setFont(QFont("Courier New", 6))
         for c in range(cols):
             x = self._M + c * (self._NW + self._GAP)
-            p.setPen(QColor(24, 40, 52))
-            p.setBrush(QColor(0, 10, 16, 110 if c % 2 == 0 else 60))
+            p.setPen(self._alpha(QColor(24, 40, 52), band))
+            p.setBrush(QColor(0, 10, 16,
+                              int((110 if c % 2 == 0 else 60) * band)))
             p.drawRoundedRect(QRectF(x - 6, 6, self._NW + 12, h - 12), 4, 4)
             label = "TRIGGER" if c == 0 else ("END" if c == cols - 1
                                                and cols > 1 else "STEPS")
-            p.setPen(QColor(C.TEXT_DIM))
+            p.setPen(self._alpha(C.TEXT_DIM, band))
             p.drawText(QRectF(x - 6, 8, self._NW + 12, 14),
                        Qt.AlignmentFlag.AlignHCenter, label)
 
-        # edges first (under the boxes)
-        p.setPen(QPen(QColor(C.PRI_DIM), 1))
-        for e in getattr(self._wf, "edges", []) or []:
-            a, b = self._xy(pos, e.source), self._xy(pos, e.target)
+        # edges first (under the boxes) — each draws in behind its source
+        for ed in getattr(self._wf, "edges", []) or []:
+            a, b = self._xy(pos, ed.source), self._xy(pos, ed.target)
             if not a or not b:
+                continue
+            pe = max(0.0, min(1.0, (prog.get(ed.source, 0.0) - 0.45) / 0.55))
+            if pe <= 0.0:
                 continue
             x1, y1 = a[0] + self._NW, a[1] + self._NH // 2
             x2, y2 = b[0], b[1] + self._NH // 2
-            p.drawLine(QLineF(x1, y1, x2, y2))
-            p.setBrush(QColor(C.PRI_DIM))
+            p.setPen(QPen(self._alpha(C.PRI_DIM, 0.3 + 0.7 * pe), 1))
+            p.drawLine(QLineF(x1, y1, x1 + (x2 - x1) * pe,
+                              y1 + (y2 - y1) * pe))
+            if pe < 1.0:
+                continue
+            if flow_on:
+                pen = QPen(self._alpha(C.PRI, 0.95), 1.6)
+                pen.setStyle(Qt.PenStyle.CustomDashLine)
+                pen.setDashPattern([2.5, 9.5])
+                pen.setDashOffset(-self._flow)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                p.setPen(pen)
+                p.drawLine(QLineF(x1, y1, x2, y2))
             p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(C.PRI_DIM))
             tri = QPolygonF([QPointF(x2, y2), QPointF(x2 - 6, y2 - 4),
                              QPointF(x2 - 6, y2 + 4)])
             p.drawPolygon(tri)
-            p.setPen(QPen(QColor(C.PRI_DIM), 1))
-            if e.when:
+            if ed.when:
                 p.setPen(QColor(C.TEXT_DIM))
                 p.setFont(QFont("Courier New", 6))
                 p.drawText(QRectF((x1 + x2) / 2 - 16, (y1 + y2) / 2 - 14,
                                   32, 12),
-                           Qt.AlignmentFlag.AlignHCenter, e.when)
-                p.setPen(QPen(QColor(C.PRI_DIM), 1))
+                           Qt.AlignmentFlag.AlignHCenter, ed.when)
 
-        # nodes
+        # nodes — cascade in by column with slide, scale and entry glow
         for nid, (c, r) in pos.items():
             n = by_id.get(nid)
-            if n is None:
+            pn = prog.get(nid, 0.0)
+            if n is None or pn <= 0.0:
                 continue
             x = self._M + c * (self._NW + self._GAP)
             y = 30 + r * (self._NH + 14)
             color = _AUTOMATION_TYPE_COLOR.get(n.type, C.TEXT_MED)
-            p.setBrush(QColor(0, 6, 10, 240))
             border = color
             if getattr(n, "risk", "") in ("dangerous", "forbidden"):
                 border = C.ACC if n.risk == "dangerous" else C.RED
-            p.setPen(QPen(QColor(border), 1.4))
-            p.drawRoundedRect(QRectF(x, y, self._NW, self._NH), 5, 5)
-            p.setPen(QColor(color))
+            cx, cy = x + self._NW / 2, y + self._NH / 2
+            p.save()
+            p.translate(cx, cy)
+            p.scale(0.90 + 0.10 * pn, 0.90 + 0.10 * pn)
+            p.translate(-cx, -cy)
+            yy = y + (1.0 - pn) * 9
+            if n.type == "TRIGGER" and pn < 1.0:
+                rr = (self._NW * 0.55) * pn + 6
+                p.setPen(QPen(self._alpha(color, (1.0 - pn) * 0.5), 1.4))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawEllipse(QRectF(cx - rr, cy - rr, rr * 2, rr * 2))
+            if pn < 0.92:
+                p.setPen(QPen(self._alpha(border, (1.0 - pn) * 0.55), 4.5))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(QRectF(x, yy, self._NW, self._NH), 5, 5)
+            p.setBrush(QColor(0, 6, 10, int(240 * pn)))
+            p.setPen(QPen(self._alpha(border, 0.35 + 0.65 * pn), 1.4))
+            p.drawRoundedRect(QRectF(x, yy, self._NW, self._NH), 5, 5)
+            p.setPen(self._alpha(color, 0.2 + 0.8 * pn))
             p.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
-            p.drawText(QRectF(x + 4, y + 3, self._NW - 8, 12),
+            p.drawText(QRectF(x + 4, yy + 3, self._NW - 8, 12),
                        Qt.AlignmentFlag.AlignLeft, n.type)
-            p.setPen(QColor(C.TEXT))
+            p.setPen(self._alpha(C.TEXT, 0.2 + 0.8 * pn))
             p.setFont(QFont("Courier New", 7))
             title = (n.name or n.id)[:16]
-            p.drawText(QRectF(x + 4, y + 16, self._NW - 8, 16),
+            p.drawText(QRectF(x + 4, yy + 16, self._NW - 8, 16),
                        Qt.AlignmentFlag.AlignLeft, title)
+            p.restore()
 
         # loop body chips (nodes that live in a LOOP config, not the main graph)
         for loop_id, ids in chips:
             a = self._xy(pos, loop_id)
-            if not a or not ids:
+            pc = prog.get(loop_id, 0.0)
+            if not a or not ids or pc <= 0.0:
                 continue
-            p.setPen(QPen(QColor("#b388ff"), 1))
+            p.setPen(QPen(self._alpha("#b388ff", 0.3 + 0.7 * pc), 1))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setFont(QFont("Courier New", 6))
             rect = QRectF(a[0], a[1] + self._NH + 4, self._NW, 16)

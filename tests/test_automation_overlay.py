@@ -183,6 +183,70 @@ class TestAutomationOverlay(unittest.TestCase):
         cv.deleteLater()
 
 
+class TestCanvasAnimation(unittest.TestCase):
+
+    def test_new_workflow_starts_entrance(self):
+        from ui import AutomationCanvas
+        cv = AutomationCanvas()
+        cv.resize(400, 300)
+        cv.set_workflow(make_wf())
+        self.assertEqual(cv._t, 0.0)
+        self.assertTrue(cv._anim.isActive())
+        self.assertFalse(cv._flow_t.isActive())
+        cv.deleteLater()
+
+    def test_same_id_does_not_restart_entrance(self):
+        from ui import AutomationCanvas
+        cv = AutomationCanvas()
+        cv.set_workflow(make_wf())
+        cv._t = 0.6                       # simulate mid-reveal (poll reload)
+        cv.set_workflow(make_wf())        # same id — must not restart
+        self.assertEqual(cv._t, 0.6)
+        self.assertTrue(cv._anim.isActive())
+        cv.deleteLater()
+
+    def test_clear_workflow_stops_all_timers(self):
+        from ui import AutomationCanvas
+        cv = AutomationCanvas()
+        cv.set_workflow(make_wf())
+        cv.set_workflow(None)
+        self.assertFalse(cv._anim.isActive())
+        self.assertFalse(cv._flow_t.isActive())
+        self.assertEqual(cv._t, 1.0)
+        self.assertEqual(cv._flow, 0.0)
+        cv.deleteLater()
+
+    def test_entrance_completes_to_flow_only_when_visible(self):
+        from ui import AutomationCanvas
+        cv = AutomationCanvas()
+        cv.resize(400, 300)
+        cv.set_workflow(make_wf())
+        cv._t = 1.0                       # pretend the reveal just finished
+        cv._anim_tick()
+        self.assertFalse(cv._anim.isActive())
+        self.assertFalse(cv._flow_t.isActive())   # hidden — no pulse
+        cv.show()
+        self.assertTrue(cv._flow_t.isActive())    # showEvent starts it
+        before = cv._flow
+        cv._flow_tick()
+        self.assertGreater(cv._flow, before)
+        cv.hide()
+        self.assertFalse(cv._flow_t.isActive())   # hideEvent stops it
+        cv.deleteLater()
+
+    def test_grab_mid_animation_no_crash(self):
+        from ui import AutomationCanvas
+        cv = AutomationCanvas()
+        cv.resize(400, 300)
+        cv.set_workflow(make_wf())        # _t == 0.0 — first frame
+        pm = cv.grab()
+        self.assertFalse(pm.isNull())
+        cv._t = 0.5
+        pm = cv.grab()
+        self.assertFalse(pm.isNull())
+        cv.deleteLater()
+
+
 class TestFacadeAndDrawer(unittest.TestCase):
 
     def test_bind_automation_store_sets_the_window_slot(self):

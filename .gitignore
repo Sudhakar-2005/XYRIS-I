@@ -21,6 +21,7 @@ config/permissions.json
 memory/long_term.json
 memory/sessions/
 memory/*.db
+config/automations/
 
 # ── Python build noise ────────────────────────────────────────────────────────
 __pycache__/
