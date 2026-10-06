@@ -247,6 +247,53 @@ class TestCanvasAnimation(unittest.TestCase):
         cv.deleteLater()
 
 
+class TestFullscreenToggle(unittest.TestCase):
+
+    def test_maximise_fills_parent_and_restores(self):
+        from PyQt6.QtWidgets import QWidget
+        from ui import AutomationOverlay
+        pw = QWidget()
+        pw.resize(1000, 720)
+        ov = AutomationOverlay(store=None, parent=pw)
+        ov.setGeometry(140, 125, 720, 470)
+        ov._toggle_maximise()
+        self.assertTrue(ov._maximised)
+        self.assertEqual(ov.geometry().size(), pw.size())
+        self.assertEqual(ov._max_btn.text(), "RESTORE")
+        ov._toggle_maximise()
+        self.assertFalse(ov._maximised)
+        self.assertEqual((ov.width(), ov.height()), (ov._OW, ov._OH))
+        self.assertEqual(ov._max_btn.text(), "FULLSCREEN")
+        self.assertEqual((ov.x(), ov.y()), (140, 125))   # re-centred
+        ov.deleteLater()
+        pw.deleteLater()
+
+    def test_escape_restores_but_never_maximises(self):
+        from PyQt6.QtWidgets import QWidget
+        from ui import AutomationOverlay
+        pw = QWidget()
+        pw.resize(900, 640)
+        ov = AutomationOverlay(store=None, parent=pw)
+        ov._esc()                          # not maximised — must do nothing
+        self.assertFalse(ov._maximised)
+        ov._toggle_maximise()
+        self.assertTrue(ov._maximised)
+        ov._esc()                          # Esc exits fullscreen
+        self.assertFalse(ov._maximised)
+        ov.deleteLater()
+        pw.deleteLater()
+
+    def test_toggle_without_parent_does_not_crash(self):
+        from ui import AutomationOverlay
+        ov = AutomationOverlay(store=None)
+        ov._toggle_maximise()
+        self.assertTrue(ov._maximised)
+        ov._toggle_maximise()
+        self.assertFalse(ov._maximised)
+        self.assertEqual((ov.width(), ov.height()), (ov._OW, ov._OH))
+        ov.deleteLater()
+
+
 class TestFacadeAndDrawer(unittest.TestCase):
 
     def test_bind_automation_store_sets_the_window_slot(self):

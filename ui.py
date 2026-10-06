@@ -3455,6 +3455,8 @@ class AutomationOverlay(_HudOverlay):
         self._store = store
         self._selected = None
         self._wf = None
+        self._maximised = False
+        self._saved_geom = None
 
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(16, 12, 16, 10)
@@ -3463,7 +3465,24 @@ class AutomationOverlay(_HudOverlay):
         hdr = QLabel("🔗  AUTOMATIONS")
         hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
-        self._lay.addWidget(hdr)
+        self._max_btn = QPushButton("FULLSCREEN")
+        self._max_btn.setFixedHeight(24)
+        self._max_btn.setFont(QFont("Courier New", 7))
+        self._max_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._max_btn.setStyleSheet(f"""
+            QPushButton {{ background: #00091a; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px;
+                padding: 0 8px; }}
+            QPushButton:hover {{ border-color: {C.PRI}; color: {C.PRI}; }}
+        """)
+        self._max_btn.clicked.connect(self._toggle_maximise)
+        hrow = QHBoxLayout()
+        hrow.addWidget(hdr)
+        hrow.addStretch()
+        hrow.addWidget(self._max_btn)
+        self._lay.addLayout(hrow)
+        esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        esc.activated.connect(self._esc)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
@@ -3549,6 +3568,35 @@ class AutomationOverlay(_HudOverlay):
     def hideEvent(self, e):
         self._timer.stop()
         super().hideEvent(e)
+
+    # ----------------------------------------------------------- fullscreen
+    def _toggle_maximise(self):
+        if not self._maximised:
+            self._saved_geom = self.geometry()
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(16777215, 16777215)
+            pw = self.parentWidget()
+            self.setGeometry(pw.rect() if pw is not None
+                             else self._saved_geom)
+            self._maximised = True
+            self._max_btn.setText("RESTORE")
+        else:
+            self.setFixedSize(self._OW, self._OH)
+            g = self._saved_geom
+            pw = self.parentWidget()
+            if g is not None and pw is not None:
+                self.setGeometry(max(0, (pw.width() - g.width()) // 2),
+                                 max(0, (pw.height() - g.height()) // 2),
+                                 g.width(), g.height())
+            elif g is not None:
+                self.setGeometry(g)
+            self._maximised = False
+            self._max_btn.setText("FULLSCREEN")
+        self.raise_()
+
+    def _esc(self):
+        if self._maximised:
+            self._toggle_maximise()
 
     # ---------------------------------------------------------------- data
     def _call(self, name, *args, default=None):
