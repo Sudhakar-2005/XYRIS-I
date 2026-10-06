@@ -6,7 +6,7 @@ Final gate, verified 2026-10-03. Interpreter: `D:\MarkLIV-venv\Scripts\python.ex
 
 | # | Requirement | Evidence | Status |
 |---|-------------|----------|--------|
-| 1 | All 15 phases (0–14) implemented in order with git checkpoints | tags `automation-v0-audit` `559b906`, `-schema` `9e40e7d`, `-runtime` `6e5de37`, `-generator` `6cd0fbd`, `-security` `d0afea9`, `-ui` `e7bec45`, `-release` (this commit) | PASS |
+| 1 | All 15 phases (0–14) implemented in order with git checkpoints | tags `automation-v0-audit` `559b906`, `-schema` `9e40e7d`, `-runtime` `6e5de37`, `-generator` `6cd0fbd`, `-security` `d0afea9`, `-store` `6e5de37`, `-ui` `e7bec45`, `-voice` `e7bec45`, `-release` `3612906` (phases consolidated onto shared commits, see phase0 map note) | PASS |
 | 2 | No fake success — outcomes only from real status/history | `tests/test_automation_actions.py` (status/history honesty), prompt `[AUTOMATION]` section "report what happened ONLY from action='status' or 'history'", `looks_like_failure` in `core/automation/adapters.py` | PASS |
 | 3 | Confirmation gate is real — approval runs, decline/expire never executes | `build_confirm` wraps `core/confirm.py`; `test_automation_adapters.py` (declined/expired = refused) | PASS |
 | 4 | Engine has zero UI/main imports (dependency inversion) | `tests/test_automation_adapters.py` source-guard test; adapters inject all side effects | PASS |
@@ -28,6 +28,7 @@ Final gate, verified 2026-10-03. Interpreter: `D:\MarkLIV-venv\Scripts\python.ex
 | After Phases 7+13 (adapters/actions) | 1414 |
 | After Phases 10–12 (overlay/activity/prompt) | 1438 |
 | **Phase 14 final** | **1438 passed, 51 warnings, 0 failed** |
+| Post-release UI work (graph animation + fullscreen toggle) | 1446 passed, 0 failed |
 
 Warnings: 51 — pre-existing (pynvml FutureWarning, mediapipe/TF chatter, `test_notification.py` toast-thread warning); none introduced by automation work.
 
