@@ -307,6 +307,63 @@ class TestFacadeAndDrawer(unittest.TestCase):
         from ui import MainWindow
         self.assertTrue(hasattr(MainWindow, "_open_automation_panel"))
 
+    def test_bind_automation_runner_sets_the_window_slot(self):
+        from ui import JarvisUI
+        ju = JarvisUI.__new__(JarvisUI)
+        ju._win = SimpleNamespace(_automation_runner=None)
+        ju.bind_automation_runner("RUNNER")
+        self.assertEqual(ju._win._automation_runner, "RUNNER")
+
+
+class TestDoubleTapStart(unittest.TestCase):
+    """Double-tap a saved row → engine.start_run, honest on every path."""
+
+    def test_runner_called_and_reported_honestly(self):
+        from ui import AutomationOverlay
+        calls = []
+        ov = AutomationOverlay(
+            store=FakeStore(workflows=[make_wf()]),
+            runner=lambda w: (calls.append(w), f"run_{w}")[1])
+        ov._start("wf_demo")
+        self.assertEqual(calls, ["wf_demo"])
+        self.assertIn("Scheduled run_wf_demo", ov._info.text())
+        self.assertIn("only when the run actually finishes", ov._info.text())
+        ov.deleteLater()
+
+    def test_engine_error_is_reported_not_swallowed(self):
+        from ui import AutomationOverlay
+
+        def boom(w):
+            raise PermissionError("missing permissions: memory")
+
+        ov = AutomationOverlay(runner=boom)
+        ov._start("wf_demo")
+        self.assertIn("Could not start wf_demo", ov._info.text())
+        self.assertIn("missing permissions: memory", ov._info.text())
+        self.assertNotIn("Scheduled", ov._info.text())
+        ov.deleteLater()
+
+    def test_unbound_runner_never_pretends(self):
+        from ui import AutomationOverlay
+        ov = AutomationOverlay(store=None)
+        ov._start("wf_demo")
+        self.assertIn("not bound", ov._info.text())
+        self.assertIn("Nothing was started", ov._info.text())
+        ov.deleteLater()
+
+    def test_rows_emit_double_clicked_to_the_runner(self):
+        from ui import AutomationOverlay, _RowBtn
+        ov = AutomationOverlay(store=FakeStore(workflows=[make_wf()]))
+        rows = [ov._list_rows.itemAt(i).widget()
+                for i in range(ov._list_rows.count())]
+        rows = [w for w in rows if isinstance(w, _RowBtn)]
+        self.assertEqual(len(rows), 1)
+        calls = []
+        ov._runner = lambda w: (calls.append(w), "run_1")[1]
+        rows[0].double_clicked.emit()
+        self.assertEqual(calls, ["wf_demo"])
+        ov.deleteLater()
+
 
 class TestSourceWiring(unittest.TestCase):
     """The seams that only run inside the live app are guarded in source."""
@@ -335,6 +392,15 @@ class TestSourceWiring(unittest.TestCase):
         i = self.main_src.index("async def run(self)")
         run = self.main_src[i:i + 9000]
         self.assertIn("bind_automation_store", run)
+
+    def test_run_binds_the_runner_for_double_tap(self):
+        i = self.main_src.index("async def run(self)")
+        run = self.main_src[i:i + 9000]
+        self.assertIn("bind_automation_runner", run)
+        self.assertIn("start_run", run)
+        self.assertIn("def bind_automation_runner", self.ui_src)
+        self.assertIn("double_clicked.connect", self.ui_src)
+        self.assertIn("def mouseDoubleClickEvent", self.ui_src)
 
     def test_emit_filter_keeps_only_run_level_events(self):
         i = self.main_src.index("def _automation_emit")

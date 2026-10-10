@@ -3434,14 +3434,29 @@ class AutomationCanvas(QWidget):
         p.end()
 
 
+class _RowBtn(QPushButton):
+    """Saved-workflow row: single click selects, double tap starts.
+    QPushButton has no doubleClicked signal, so the event is caught here
+    and re-emitted — the click path (selection) still fires normally."""
+
+    double_clicked = pyqtSignal()
+
+    def mouseDoubleClickEvent(self, e):
+        self.double_clicked.emit()
+        super().mouseDoubleClickEvent(e)
+
+
 class AutomationOverlay(_HudOverlay):
     """The automations panel: store list (left) · layered graph (right) ·
     recent runs (bottom). Polls the store on a GUI timer — AutomationStore
-    is atomic-write file storage, so reads are safe from this thread."""
+    is atomic-write file storage, so reads are safe from this thread.
+    Double-tapping a saved row starts it via the bound engine runner (same
+    validation/permission gates as the model's run verb); with no runner
+    bound the double-tap reports that honestly instead of pretending."""
 
     _OW, _OH = 720, 470
 
-    def __init__(self, store=None, parent=None):
+    def __init__(self, store=None, parent=None, runner=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
@@ -3453,6 +3468,7 @@ class AutomationOverlay(_HudOverlay):
         """)
         self.setFixedSize(self._OW, self._OH)
         self._store = store
+        self._runner = runner
         self._selected = None
         self._wf = None
         self._maximised = False
@@ -3646,11 +3662,12 @@ class AutomationOverlay(_HudOverlay):
             for it in items[:25]:
                 wid = str(it.get("id") or "")
                 status = str(it.get("status") or "")
-                btn = QPushButton(f"{str(it.get('name') or wid)[:20]}\n"
-                                  f"  {status} · {it.get('trigger', '')}")
+                btn = _RowBtn(f"{str(it.get('name') or wid)[:20]}\n"
+                              f"  {status} · {it.get('trigger', '')}")
                 btn.setStyleSheet(style)
                 btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 btn.clicked.connect(lambda _=False, w=wid: self._select(w))
+                btn.double_clicked.connect(lambda w=wid: self._start(w))
                 self._list_rows.addWidget(btn)
         self._list_rows.addStretch()
 
@@ -3660,6 +3677,26 @@ class AutomationOverlay(_HudOverlay):
         self._canvas.set_workflow(self._wf)
         self._render_info()
         self._render_runs()
+
+    def _start(self, wf_id):
+        """Double-tap: schedule a live run through the bound engine runner.
+        Every failure path says so honestly — 'started' means scheduled,
+        outcomes only ever come from the run record itself."""
+        if self._runner is None:
+            self._info.setText(
+                "Double-tap start is not bound yet (no engine) — ask JARVIS "
+                "with action='run' instead. Nothing was started.")
+            return
+        try:
+            run_id = self._runner(wf_id)
+        except Exception as e:           # KeyError/ValueError/Permission/…
+            self._info.setText(
+                f"Could not start {wf_id}: {type(e).__name__}: {e}")
+            return
+        self._info.setText(
+            f"Scheduled {run_id} (live, trigger=manual). Real outcomes "
+            f"appear in RECENT RUNS only when the run actually finishes — "
+            f"nothing is assumed here.")
 
     def _render_info(self):
         wf = self._wf
@@ -4474,6 +4511,7 @@ class MainWindow(QMainWindow):
         self._activity_feed = None   # Phase 32: bound by JarvisUI at run()
         self._automation_overlay = None
         self._automation_store = None  # Phase 10: bound by JarvisUI at run()
+        self._automation_runner = None  # double-tap start, bound at run()
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
@@ -6690,10 +6728,12 @@ class MainWindow(QMainWindow):
         self._activity_overlay = ov
 
     def _open_automation_panel(self):
-        # Phase 10: automations — read-only view over the engine's store,
+        # Phase 10: automations - read-only view over the engine's store,
         # bound at run(); None (tests, pre-bind) opens an honest empty view.
         ov = AutomationOverlay(store=getattr(self, "_automation_store", None),
-                               parent=self.centralWidget())
+                               parent=self.centralWidget(),
+                               runner=getattr(self, "_automation_runner",
+                                              None))
         self._centre_overlay(ov)
         self._automation_overlay = ov
 
@@ -7089,8 +7129,13 @@ class JarvisUI:
     def bind_automation_store(self, store) -> None:
         """Phase 10: hand the HUD's automations overlay the engine store.
         Called once from run(); the overlay polls it on a GUI timer
-        (AutomationStore is atomic-write file storage — safe to read)."""
+        (AutomationStore is atomic-write file storage - safe to read)."""
         self._win._automation_store = store
+
+    def bind_automation_runner(self, runner) -> None:
+        """Double-tap start: the engine's start_run, same fast-fail gates
+        (validation/permissions/loop) as the model's run verb."""
+        self._win._automation_runner = runner
 
     def wait_for_api_key(self):
         while not self._win._ready:

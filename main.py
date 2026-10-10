@@ -3095,6 +3095,16 @@ class JarvisLive:
                            if getattr(self, "_automation", None) else None)
             except Exception:
                 pass
+        # Double-tap on a panel row starts a run through the same engine
+        # fast-fail gate the model's run verb uses (nothing bypassed).
+        _bind_run = getattr(_ui, "bind_automation_runner", None)
+        if callable(_bind_run):
+            try:
+                _eng = getattr(self, "_automation", None)
+                _bind_run((lambda w: _eng.start_run(w, trigger="manual"))
+                          if _eng is not None else None)
+            except Exception:
+                pass
         self.emit_event(EventType.SYSTEM_STARTUP, source="main")
 
         # Automation V0.1: scheduler starts once the loop + bus are live and
