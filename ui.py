@@ -6404,17 +6404,17 @@ class MainWindow(QMainWindow):
             if self._gesture_engine:
                 if new_val:
                     self._gesture_engine.start()
-                    self.write_log("SYS: Gesture control enabled")
+                    self._log.append_log("SYS: Gesture control enabled")
                 else:
                     self._gesture_engine.stop()
-                    self.write_log("SYS: Gesture control disabled")
+                    self._log.append_log("SYS: Gesture control disabled")
             elif new_val:
-                self.write_log("ERR: Gesture engine unavailable")
+                self._log.append_log("ERR: Gesture engine unavailable")
             else:
-                self.write_log("SYS: Gesture control disabled")
+                self._log.append_log("SYS: Gesture control disabled")
             self._refresh_gesture_btn()
         except Exception as e:
-            self.write_log(f"ERR: Gesture toggle failed — {e}")
+            self._log.append_log(f"ERR: Gesture toggle failed - {e}")
 
     def _toggle_hud_style(self):
         """Swap the centrepiece. Both objects stay in memory, so the change is
