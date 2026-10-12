@@ -366,11 +366,13 @@ def call(contents, tier: str = FAST, config=None,
             return resp
         except Exception as e:
             msg = str(e)
-            quota = MODEL_MANAGER.record(model, False,
-                                         time.monotonic() - t0, error=msg)
-            if quota:
-                print(f"[Gemini] {model}: out of quota — skipping it for "
-                      f"{COOLDOWN_SECONDS // 60} minutes")
+            cooled = MODEL_MANAGER.record(model, False,
+                                          time.monotonic() - t0, error=msg)
+            if cooled:
+                why = ("out of quota" if cooled == "quota"
+                       else "provider unreachable")
+                print(f"[Gemini] {model}: {why} — skipping it for "
+                      f"{COOLDOWN_SECONDS // 60} minutes ({msg[:80]})")
             else:
                 print(f"[Gemini] {model}: {type(e).__name__}: {msg[:140]}")
     return None

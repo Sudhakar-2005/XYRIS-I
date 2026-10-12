@@ -175,15 +175,37 @@ class ModelManager:
         return ("429" in msg or "RESOURCE_EXHAUSTED" in u
                 or "RESOURCEEXHAUSTED" in u)
 
+    @staticmethod
+    def _is_provider_error(msg: str) -> bool:
+        """The endpoint itself is unhealthy (Phase 7): connection refused,
+        DNS failure, TLS failure, timeout, or a 5xx — not the model's
+        fault, but the rung must still step down or the ladder keeps
+        hammering a dead provider."""
+        u = msg.upper()
+        return any(m in u for m in (
+            "CONNECTION", "CONNECT", "TIMED OUT", "TIMEOUT",
+            "DNS", "SSL", "GAIERROR", "UNREACHABLE",
+            "GETADDRINFO", "RESOLV", "GAIERROR",
+            "502", "503", "504", "SERVICE UNAVAILABLE",
+            "GATEWAY", "BAD GATEWAY",
+        ))
+
     def record(self, model: str, ok: bool, latency: float,
-               error: str = "") -> bool:
-        """Record one attempt. Returns True when the failure was a quota
-        error (429/RESOURCE_EXHAUSTED) and the rung was put on cooldown —
-        the caller prints its own message, this only applies the policy.
+               error: str = "") -> str:
+        """Record one attempt. Returns the cooldown reason applied:
+        ``"quota"`` (429/RESOURCE_EXHAUSTED), ``"provider"`` (endpoint
+        unhealthy), or ``""`` — an empty reason is falsy, so legacy
+        ``if record(...)`` call sites keep working. The caller prints its
+        own message, this only applies the policy.
         Latency averages cover SUCCESSFUL attempts only: a rung that spent
         10s timing out before failing did not answer, and `avg_latency` is
         the question "how long until I have an answer"."""
-        quota = (not ok) and self._is_quota_error(error)
+        reason = ""
+        if not ok:
+            if self._is_quota_error(error):
+                reason = "quota"
+            elif self._is_provider_error(error):
+                reason = "provider"
         with self._lock:
             st = self._stats.setdefault(model, RungStats())
             st.attempts += 1
@@ -194,11 +216,11 @@ class ModelManager:
             else:
                 st.fail += 1
                 st.last_error = error[:200]
-                if quota:
+                if reason:
                     st.cooldown_until = max(
                         st.cooldown_until,
                         time.monotonic() + COOLDOWN_SECONDS)
-        return quota
+        return reason
 
     def snapshot(self) -> dict[str, dict[str, float | int | str]]:
         """Copy of every rung's counters, safe to print or log."""
