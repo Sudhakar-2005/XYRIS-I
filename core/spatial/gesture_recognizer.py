@@ -13,6 +13,7 @@ from typing import Optional
 from core.spatial.interaction_state import (
     GestureType,
     GestureEvent,
+    GestureIntent,
     HandLandmarks,
     GestureSettings,
 )
@@ -113,7 +114,7 @@ class GestureRecognizer:
                         confidence=0.85,
                         timestamp=timestamp,
                         hand=hand,
-                        intent="drag_move",
+                        intent=GestureIntent.DRAG_MOVE,
                         pointer_position=hand.index_tip,
                         drag_delta=delta,
                     )

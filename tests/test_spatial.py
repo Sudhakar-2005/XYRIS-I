@@ -275,3 +275,25 @@ class TestSafetyController:
         safety.validate_event(event)
         log = safety.get_action_log()
         assert len(log) == 1
+
+
+class TestGestureIntentRegression:
+    """The recognizer used to store intent='drag_move' as a raw string while
+    SafetyController.validate_event reads event.intent.value — every
+    pinch-drag blew the engine loop with 'str' object has no attribute
+    'value'. Intents must be GestureIntent members."""
+
+    def test_drag_event_passes_the_safety_log(self):
+        safety = SafetyController()
+        event = GestureEvent(gesture=GestureType.PINCH,
+                             intent=GestureIntent.DRAG_MOVE, confidence=0.85)
+        is_safe, reason = safety.validate_event(event)
+        assert is_safe, reason
+
+    def test_recognizer_never_stores_a_raw_string_intent(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[1] /
+               "core" / "spatial" / "gesture_recognizer.py") \
+            .read_text(encoding="utf-8")
+        assert 'intent="' not in src
+        assert "intent='" not in src
