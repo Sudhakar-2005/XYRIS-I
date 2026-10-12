@@ -204,6 +204,12 @@ class ActionRegistry:
         rec = self._actions.get(name)
         return rec.policy if rec else None
 
+    def record(self, name: str) -> Optional["ActionRecord"]:
+        """The loaded record for `name` (valid entries only), or None —
+        the public reader for metadata like parameters/valid that used to
+        be reachable only through the private _all_records list."""
+        return self._actions.get(name)
+
     def verify_fn(self, name: str) -> Optional[Callable]:
         """M8: the post-dispatch probe for `name`, or None when the action
         declares no verification (main.py registers the callable with

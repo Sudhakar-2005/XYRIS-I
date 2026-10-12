@@ -416,21 +416,28 @@ class TestSourceGuards(unittest.TestCase):
     def setUpClass(cls):
         cls.src = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
 
-    def test_execute_tool_contains_the_permission_gate(self):
+    def test_execute_tool_runs_the_shared_gate(self):
+        # Brain Phase 1: the gate moved into core/gates.py so the automation
+        # path cannot drift from the chat path — the entry must call it, and
+        # the model-visible denial print stays here.
         i = self.src.index("async def _execute_tool")
         j = self.src.index("def _tool_policy")
         entry = self.src[i:j]
-        self.assertIn("policy.permissions", entry)
-        self.assertIn("is_granted", entry)
+        self.assertIn("evaluate_gates(", entry)
         self.assertIn("permission not granted", entry)
 
     def test_the_gate_precedes_the_confirmation_gate(self):
-        i = self.src.index("async def _execute_tool")
-        j = self.src.index("def _tool_policy")
-        entry = self.src[i:j]
-        self.assertLess(entry.index("if policy.permissions:"),
-                        entry.index("if policy.requires_confirmation:"),
+        gates_src = (PROJECT_ROOT / "core" / "gates.py").read_text(
+            encoding="utf-8")
+        body = gates_src[gates_src.index("def evaluate_gates"):]
+        i_forbidden = body.index("forbidden")
+        i_permissions = body.index("permissions")
+        i_confirm = body.index("requires_confirmation")
+        self.assertLess(i_forbidden, i_permissions,
+                        "availability: forbidden refused first")
+        self.assertLess(i_permissions, i_confirm,
                         "availability check must run before consent")
+        self.assertIn("is_granted", body)
 
     def test_permissions_metadata_never_reaches_gemini(self):
         decls = main.__dict__["TOOL_DECLARATIONS"]

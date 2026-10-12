@@ -68,6 +68,34 @@ class CapabilityCatalog:
 
     # ------------------------------------------------------------- building
 
+    def _record_for(self, name: str) -> Any:
+        """The ActionRecord behind `name`, whatever shape the registry has.
+
+        The real ActionRegistry exposes record(); its _all_records attribute
+        is a LIST of every record (valid and rejected) — the old reader
+        required a dict, silently found nothing, and left required-param
+        validation inert. Fakes may still carry a name→record dict.
+        """
+        getter = getattr(self._actions, "record", None)
+        if callable(getter):
+            try:
+                return getter(name)
+            except Exception:
+                pass
+        records = getattr(self._actions, "_all_records", None)
+        if isinstance(records, dict):
+            return records.get(name)
+        if isinstance(records, list):
+            fallback = None
+            for r in records:
+                if getattr(r, "name", None) != name:
+                    continue
+                if getattr(r, "valid", False):
+                    return r
+                fallback = fallback or r
+            return fallback
+        return None
+
     def refresh(self) -> None:
         caps: dict[str, Capability] = {}
 
@@ -80,10 +108,7 @@ class CapabilityCatalog:
                 try:
                     policy = self._actions.policy(name)
                     desc = self._actions.describe(name) or ""
-                    rec = None
-                    records = getattr(self._actions, "_all_records", None)
-                    if isinstance(records, dict):
-                        rec = records.get(name)
+                    rec = self._record_for(name)
                     params = dict(getattr(rec, "parameters", None) or {}) if rec else {}
                     available = bool(getattr(rec, "valid", True)) if rec else True
                 except Exception:

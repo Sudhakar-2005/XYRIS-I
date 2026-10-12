@@ -485,7 +485,9 @@ class TestSourceGuards(unittest.TestCase):
         i = self.src.index("async def _execute_tool")
         j = self.src.index("async def _dispatch_tool")
         entry = self.src[i:j]
-        self.assertIn("policy.risk == \"forbidden\"", entry)
+        # Brain Phase 1: rules live in core/gates.py; the entry applies the
+        # shared gate and keeps the confirm/dispatch machinery.
+        self.assertIn("evaluate_gates(", entry)
         self.assertIn("confirm_gate.request", entry)
         self.assertIn("run_coroutine_threadsafe", entry)
         self.assertIn("_dispatch_tool(fc, policy)", entry)

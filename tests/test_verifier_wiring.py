@@ -316,6 +316,46 @@ class TestDispatchWiring(unittest.TestCase):
         self.assertNotIn("[VERIFIED]", out)
         self.assertNotIn("[NOT VERIFIED]", out)
 
+    # -- structured verdict (brain Phase 1): the automation adapter reads
+    #    response["verification"] instead of sniffing failure-shaped text.
+
+    def test_verified_carries_a_structured_verdict(self):
+        resp = self._dispatch(
+            lambda a, o: _v(VerificationStatus.VERIFIED, "running", 0.85))
+        ver = resp.response.get("verification")
+        self.assertIsInstance(ver, dict)
+        self.assertTrue(ver["passed"])
+        self.assertEqual(ver["status"], "verified")
+        self.assertEqual(ver["tool"], "open_app")
+        self.assertAlmostEqual(ver["confidence"], 0.85)
+        self.assertEqual(ver["detail"], "running")
+
+    def test_failed_carries_passed_false(self):
+        resp = self._dispatch(
+            lambda a, o: _v(VerificationStatus.FAILED, "no matching process"))
+        ver = resp.response["verification"]
+        self.assertFalse(ver["passed"])
+        self.assertEqual(ver["status"], "failed")
+
+    def test_unverifiable_is_uncertainty_not_failure(self):
+        resp = self._dispatch(check_fn=None)
+        ver = resp.response["verification"]
+        self.assertTrue(ver["passed"])
+        self.assertEqual(ver["status"], "unverifiable")
+
+    def test_verification_none_has_no_verdict_key(self):
+        resp = self._dispatch(
+            lambda a, o: _v(VerificationStatus.VERIFIED, "x"),
+            policy=self.policy_none)
+        self.assertNotIn("verification", resp.response)
+
+    def test_failed_dispatch_carries_no_verdict(self):
+        actions = _FakeActions(raises=RuntimeError("handler died"))
+        resp = self._dispatch(
+            lambda a, o: _v(VerificationStatus.VERIFIED, "should not run"),
+            actions=actions)
+        self.assertNotIn("verification", resp.response)
+
 
 class TestOpenAppProbe(unittest.TestCase):
     """Fake process probe: verified only when a process really runs."""

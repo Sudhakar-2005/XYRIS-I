@@ -6,11 +6,16 @@ knows about the dispatcher gate, the confirm banner, gemini and memory.
 Everything here is unit-testable with fakes; no module imports main or ui.
 
 Honesty rules encoded in this file:
-  * a forbidden tool or an ungranted permission is refused BEFORE dispatch
+  * forbidden / ungranted permission / no-user-turn shutdown / busy or
+    missing gate are refused BEFORE dispatch — the rules come from
+    core/gates.evaluate_gates, the SAME function JarvisLive._execute_tool
+    uses, so the two paths cannot drift
   * requires_confirmation tools wait for the real human gate, synchronously
     inside the run — a declined/expired banner ends the step as refused,
     never as success
-  * a failure-shaped dispatcher string is reported as ok=False
+  * a failure-shaped dispatcher string is reported as ok=False, and a
+    structured verifier verdict with passed=False is reported as ok=False
+    even when the text looks fine
 """
 from __future__ import annotations
 
@@ -21,8 +26,11 @@ import uuid
 from types import SimpleNamespace
 from typing import Any, Callable
 
-# Text markers that mean the dispatcher did NOT do the thing. Kept in sync
-# with schema.NodeResult.from_tool_output.
+from core.gates import DENY, evaluate_gates, message_for
+
+# Text markers that mean the dispatcher did NOT do the thing — the single
+# failure matcher in the repo (the dead duplicate in
+# NodeResult.from_tool_output was deleted in brain Phase 1).
 FAILURE_MARKERS = (
     " failed:",
     " is not available.",
@@ -116,12 +124,14 @@ def build_tool_call(*,
                     policy_of: Callable[[str], Any],
                     confirm: Callable[[str, str], Any] | None = None,
                     ledger: Any = None,
-                    pending: Callable[[], str] | None = None
+                    pending: Callable[[], str] | None = None,
+                    heard_user_text: Callable[[], bool] | None = None
                     ) -> Callable[..., Any]:
     """tool_call(tool, args, timeout_s) -> awaitable dict.
 
-    Applies the SAME enforcement order as JarvisLive._execute_tool
-    (forbidden → permissions → confirm) and then dispatches through the
+    Applies the SAME gate as JarvisLive._execute_tool — both call
+    core/gates.evaluate_gates (forbidden → permissions → user-turn →
+    gate availability → busy → consent) — and then dispatches through the
     existing dispatcher, which enforces its own policy timeout.
     """
 
@@ -132,31 +142,18 @@ def build_tool_call(*,
             risk="safe", permissions=(), requires_confirmation=False,
             timeout=timeout_s)
 
-        if getattr(policy, "risk", "safe") == "forbidden":
+        heard = bool(heard_user_text()) if callable(heard_user_text) else False
+        gate = evaluate_gates(
+            tool, policy, ledger=ledger, heard_user_text=heard,
+            busy=bool(pending()) if callable(pending) else False,
+            confirm_available=confirm is not None)
+        if gate.decision == DENY:
             return {"ok": False, "refused": True, "status": "refused",
-                    "text": (f"I cannot run '{tool}' — it is marked "
-                             f"forbidden on this system. Nothing was done.")}
-
-        denied = []
-        perms = getattr(policy, "permissions", ()) or ()
-        if perms and ledger is not None:
-            denied = [p for p in perms if not ledger.is_granted(p)]
-        if denied:
-            return {"ok": False, "refused": True, "status": "refused",
-                    "text": (f"I cannot run '{tool}' — the required "
-                             f"permission(s) are not granted: "
-                             f"{', '.join(denied)}. Nothing was done.")}
+                    "text": message_for(gate.rule, tool, gate.denied)}
 
         if getattr(policy, "requires_confirmation", False):
-            if confirm is None:
-                return {"ok": False, "refused": True, "status": "refused",
-                        "text": (f"'{tool}' requires a human confirmation "
-                                 f"and no confirmation gate is available. "
-                                 f"Nothing was done.")}
-            if pending is not None and pending():
-                return {"ok": False, "refused": True, "status": "refused",
-                        "text": ("Another confirmation is already waiting "
-                                 "on screen. Nothing was done.")}
+            # decision is CONFIRM: the gate already ruled the banner free,
+            # the shutdown user-turn rule passed, and confirm exists.
             title = tool.replace("_", " ").capitalize()
             detail = (f"Automation wants to run '{tool}' with "
                       f"{json.dumps(args, ensure_ascii=False, default=str)[:400]}")
@@ -177,9 +174,26 @@ def build_tool_call(*,
                     "error": str(exc)}
         r = getattr(resp, "response", None)
         text = str((r or {}).get("result") or "") if isinstance(r, dict) else str(r or "")
+        # Structured verifier verdict first: passed=False ends the node as
+        # an error even when the prose never matches a failure marker.
+        ver = r.get("verification") if isinstance(r, dict) else None
+        ver_status = ""
+        if isinstance(ver, dict):
+            ver_status = str(ver.get("status") or "")
+            if ver.get("passed") is False:
+                return {"ok": False, "status": "error", "text": text,
+                        "verification": ver_status or "failed"}
+        elif isinstance(ver, str):
+            ver_status = ver or ""
         if looks_like_failure(text):
-            return {"ok": False, "status": "error", "text": text}
-        return {"ok": True, "status": "ok", "text": text}
+            out = {"ok": False, "status": "error", "text": text}
+            if ver_status:
+                out["verification"] = ver_status
+            return out
+        out = {"ok": True, "status": "ok", "text": text}
+        if ver_status:
+            out["verification"] = ver_status
+        return out
 
     return tool_call
 

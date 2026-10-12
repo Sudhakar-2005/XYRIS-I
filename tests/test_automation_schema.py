@@ -156,27 +156,9 @@ class TestPathUtils(unittest.TestCase):
 
 
 class TestNodeResult(unittest.TestCase):
-
-    def test_success_output(self):
-        r = NodeResult.from_tool_output("Found 5 results.", duration_ms=12)
-        self.assertTrue(r.success)
-        self.assertEqual(r.status, "ok")
-        self.assertEqual(r.execution_time_ms, 12)
-
-    def test_failure_strings(self):
-        for bad in ("Tool 'web_search' failed: boom",
-                    "Action 'x' is not available.",
-                    ""):
-            r = NodeResult.from_tool_output(bad)
-            self.assertFalse(r.success, bad)
-
-    def test_timeout_and_refusal(self):
-        t = NodeResult.from_tool_output("Tool 'x' timed out after 5s.",
-                                        timed_out=True)
-        self.assertEqual(t.status, "timeout")
-        f = NodeResult.from_tool_output("I cannot run this — forbidden.",
-                                        refused=True)
-        self.assertEqual(f.status, "refused")
+    # The from_tool_output sniffer was dead duplication of
+    # adapters.looks_like_failure (brain Phase 1) — removed with its tests;
+    # marker coverage lives in test_automation_adapters.
 
     def test_round_trip(self):
         r = NodeResult(success=True, message="m", data={"k": 1},

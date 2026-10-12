@@ -100,6 +100,11 @@ flowchart TD
     P8 --> P9["9 Native (V0.2+)"]
 ```
 
+## Errata / progress log
+
+- **Phase 1 — COMPLETED** (this repo state): `core/gates.py::evaluate_gates` + `message_for` are the single rule/wording source, called by `_execute_tool` (`main.py:1564`) and `build_tool_call` (`adapters.py:146`); automation now enforces the `shutdown_jarvis` user-turn fail-closed rule; `_run_verification` returns `(text, verdict)` with `response["verification"]` consumed by the adapter (a passed=False verdict → node error, `runtime.py:8-9` docstring now true); `ActionRegistry.record()` + `CapabilityCatalog._record_for` handle the real list-shaped registry so `validate.py:166` required-param checks work; dead `NodeResult.from_tool_output` deleted (single failure matcher = `adapters.FAILURE_MARKERS`); `_configure_logging()` wired in `main()`; risk vocabularies verified identical (`RISK_LEVELS == RISK_ORDER`) with a drift test instead of a translation table. Source guards in `test_permission_enforcement.py`/`test_tool_metadata.py` updated to guard the seam at its new home (both paths). Tests: **1487 passed, 51 warnings** (baseline was 1454/51; +36 new, −3 dead-code tests). Boot verified (PID 12468, engine ready/scheduler started/3 verify rules).
+- **Found during Phase 1 boot (pre-existing, NOT this phase):** `core/spatial/gesture_recognizer.py:116,223` pass `intent` as raw strings (`"drag_move"`, `"rotate_cw"/"rotate_ccw"`) while `safety_controller.py:82` calls `event.intent.value` → recurring `Processing loop error` whenever pinch-drag/rotate fires (caught by the loop, app stays up, gestures degraded). Fix = use `GestureIntent.DRAG_MOVE/ROTATE_CW/ROTATE_CCW` members; scheduled as a separate follow-up, not folded into Phase 1.
+
 ## Global risks & mitigations
 1. **Scope creep into "build a second brain"** — mitigation: every phase starts from reuse columns; non-goals list in gap analysis is binding.
 2. **Security regression while refactoring gates** — mitigation: `test_tool_metadata.py` confirm-invariants run in Phase 1 first, parity tests added before deleting the mirror.

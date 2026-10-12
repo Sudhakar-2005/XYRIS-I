@@ -40,6 +40,7 @@ for _stream in ("stdout", "stderr"):
 from core.perf import mark as _perf_mark, print_report_if_enabled as _perf_report
 
 import asyncio
+import logging
 import re
 import threading
 import time
@@ -92,11 +93,12 @@ from core.viseme               import VisemeStream
 from core.vision_labels        import CAMERA, SCREEN, source_text
 from core.event_bus            import EventBus, Event, EventType, Priority
 from core.permissions          import PermissionLedger
+from core.gates                import evaluate_gates, message_for
 from core.activity             import ActivityFeed
 from core.degraded             import EndpointDetector, OfflineVoice
 from core.verifier import (
     Verifier, VerificationRule, VerificationStrategy,
-    VerificationResult, VerificationStatus,
+    VerificationResult, VerificationStatus, verdict_dict,
 )
 from core.wake_word            import (
     WakeWordDetector, is_ready as wake_is_ready, install_and_download as wake_install,
@@ -860,7 +862,8 @@ class JarvisLive:
                     policy_of=self._tool_policy,
                     confirm=_aconfirm,
                     ledger=self._permissions,
-                    pending=confirm_gate.pending_title),
+                    pending=confirm_gate.pending_title,
+                    heard_user_text=lambda: self._heard_user_text),
                 confirm=_aconfirm,
                 ai_call=build_ai_call(),
                 memory_save=build_memory_save(_mem_remember),
@@ -1546,92 +1549,60 @@ class JarvisLive:
 
     async def _execute_tool(self, fc) -> types.FunctionResponse:
         """Entry point for every model tool call: resolve the V3 dispatch
-        policy first (Phase 17), then dispatch.
+        policy first (Phase 17), then apply the shared gate and dispatch.
 
-        forbidden → refuse without running anything; a revoked permission →
-        refuse without running anything (Phase 40); gated → park behind
-        core/confirm so a HUMAN presses CONFIRM and the real dispatch runs
-        from the gate's worker thread; otherwise → _dispatch_tool, which
-        enforces the policy's timeout.
+        The gate lives in core/gates.py — the exact same rules the
+        automation adapters run, so the two paths cannot drift. denied →
+        refuse without running anything; confirm → park behind core/confirm
+        so a HUMAN presses CONFIRM and the real dispatch runs from the
+        gate's worker thread; otherwise → _dispatch_tool, which enforces
+        the policy's timeout.
         """
         name = fc.name
         policy = self._tool_policy(name)
+        ledger = getattr(self, "_permissions", None) or _DEFAULT_PERMISSIONS
+        gate = evaluate_gates(
+            name, policy, ledger=ledger,
+            heard_user_text=getattr(self, "_heard_user_text", False),
+            busy=bool(confirm_gate.pending_title()))
 
-        if policy.risk == "forbidden":
-            print(f"[Policy] ⛔ {name} — refused (risk=forbidden)")
+        if gate.decision == "deny":
+            if gate.rule == "forbidden":
+                print(f"[Policy] ⛔ {name} — refused (risk=forbidden)")
+            elif gate.rule == "permission":
+                print(f"[Policy] ⛔ {name} — refused (permission not granted: "
+                      f"{', '.join(gate.denied)})")
+            elif gate.rule == "user_turn":
+                print("[Policy] ✖ shutdown_jarvis refused — "
+                      "no user input in this session yet")
+            elif gate.rule == "busy":
+                print(f"[Policy] 🔒 {name} — refused (a confirmation is "
+                      f"already waiting on screen)")
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(
                 id=fc.id, name=name,
-                response={"result":
-                          f"I cannot run '{name}' — it is marked forbidden "
-                          f"on this system. Nothing was done."})
+                response={"result": message_for(gate.rule, name, gate.denied)})
 
-        if policy.permissions:
-            # Phase 40: permission metadata as the enforcement layer. The
-            # ledger reads config/permissions.json; a missing file grants
-            # everything (today's behavior), a corrupt one revokes
-            # everything. Availability first, consent second: a revoked
-            # tool never reaches the confirmation gate.
-            ledger = getattr(self, "_permissions", None) or _DEFAULT_PERMISSIONS
-            denied = [p for p in policy.permissions if not ledger.is_granted(p)]
-            if denied:
-                print(f"[Policy] ⛔ {name} — refused (permission not granted: "
-                      f"{', '.join(denied)})")
-                if not self.ui.muted:
-                    self.ui.set_state("LISTENING")
-                return types.FunctionResponse(
-                    id=fc.id, name=name,
-                    response={"result":
-                              f"I cannot run '{name}' — the required "
-                              f"permission(s) are not granted on this system: "
-                              f"{', '.join(denied)}. Nothing was done. The "
-                              f"user can re-enable them in "
-                              f"config/permissions.json."})
+        if gate.decision == "confirm":
+            loop = asyncio.get_event_loop()
+            detail = self._confirm_detail(name)
 
-        if policy.requires_confirmation:
-            if (name == "shutdown_jarvis"
-                    and not getattr(self, "_heard_user_text", False)):
-                # Fail closed: the model has called shutdown_jarvis on its own
-                # right after the startup briefing, with nobody having said a
-                # word (the mic is not streamed while JARVIS speaks, so there
-                # was no user turn to react to). The prompt rule — only when
-                # the user explicitly ends the session — is enforced here,
-                # where a rule can actually be enforced: no banner, no pending
-                # action, an honest sentence the model must work from.
-                print("[Policy] ✖ shutdown_jarvis refused — "
-                      "no user input in this session yet")
-                return types.FunctionResponse(
-                    id=fc.id, name=name,
-                    response={"result":
-                              "Refused: shutdown_jarvis requires the user to "
-                              "have spoken or typed something in this session "
-                              "first. The startup briefing does not count. "
-                              "Nothing was done — do not call this tool again "
-                              "until the user explicitly asks to end the "
-                              "session."})
-            if confirm_gate.pending_title():
-                sentence = ("There is already a confirmation waiting on "
-                            "screen. Ask the user to answer that one first.")
-            else:
-                loop = asyncio.get_event_loop()
-                detail = self._confirm_detail(name)
+            def _sync_run():
+                # core/confirm runs this on its worker thread after a
+                # human presses CONFIRM. Post the real dispatch back to
+                # the session loop — the tool belongs there — and wait
+                # for its result so the gate can log it.
+                fut = asyncio.run_coroutine_threadsafe(
+                    self._dispatch_tool(fc, policy), loop)
+                resp = fut.result(timeout=policy.timeout + 15.0)
+                r = getattr(resp, "response", None)
+                return str((r or {}).get("result") or "Done.")
 
-                def _sync_run():
-                    # core/confirm runs this on its worker thread after a
-                    # human presses CONFIRM. Post the real dispatch back to
-                    # the session loop — the tool belongs there — and wait
-                    # for its result so the gate can log it.
-                    fut = asyncio.run_coroutine_threadsafe(
-                        self._dispatch_tool(fc, policy), loop)
-                    resp = fut.result(timeout=policy.timeout + 15.0)
-                    r = getattr(resp, "response", None)
-                    return str((r or {}).get("result") or "Done.")
-
-                sentence = confirm_gate.request(
-                    key=name,
-                    title=name.replace("_", " ").capitalize(),
-                    detail=detail, run=_sync_run)
+            sentence = confirm_gate.request(
+                key=name,
+                title=name.replace("_", " ").capitalize(),
+                detail=detail, run=_sync_run)
             print(f"[Policy] 🔒 {name} — parked behind the confirmation gate")
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
@@ -1711,6 +1682,7 @@ class JarvisLive:
         loop   = asyncio.get_event_loop()
         result = "Done."
         _failed = False
+        verdict = None      # structured twin of the prose verification note
 
         try:
             if name == "recall_memory":
@@ -1852,7 +1824,7 @@ class JarvisLive:
         # already told the model the truth — verifying it would only add a
         # second opinion about an event that did not happen.
         if not _failed and policy.verification == "verifier":
-            result = await self._run_verification(name, args, result)
+            result, verdict = await self._run_verification(name, args, result)
 
         # M11: the bus hears every turn of the wheel — success and failure
         # alike feed the dashboard stream (§3.15); the prints stay as-is.
@@ -1877,19 +1849,29 @@ class JarvisLive:
         _sched = (self._action_registry.scheduling(name)
                   or self._plugin_registry.scheduling(name))
         _extra = {"scheduling": _sched} if _sched else {}
+        response = {"result": result}
+        if verdict is not None:
+            # Machine-readable twin of the prose note above: the automation
+            # adapter reads this to refuse a failed verification instead of
+            # guessing from failure-shaped strings.
+            response["verification"] = verdict
         return types.FunctionResponse(
             id=fc.id, name=name,
-            response={"result": result},
+            response=response,
             **_extra
         )
 
-    async def _run_verification(self, name: str, args: dict, result) -> str:
-        """Run the Verifier for `name` and append its verdict to the result.
+    async def _run_verification(self, name: str, args: dict, result):
+        """Run the Verifier for `name` and return (text, verdict).
 
-        Bounded by VERIFY_TIMEOUT_S: a probe stuck on a wedged process list
-        or browser must not hold the conversation — on timeout the note says
-        the check never finished rather than guessing at its answer. Runs in
-        an executor because the probes are synchronous OS/playwright calls.
+        text = the tool's result plus the model-facing prose note (what the
+        model reads); verdict = the structured twin for non-model consumers
+        (the automation adapter refuses a failed verdict instead of sniffing
+        failure-shaped strings). Bounded by VERIFY_TIMEOUT_S: a probe stuck
+        on a wedged process list or browser must not hold the conversation —
+        on timeout the note says the check never finished rather than
+        guessing at its answer. Runs in an executor because the probes are
+        synchronous OS/playwright calls.
         """
         loop = asyncio.get_event_loop()
         try:
@@ -1907,7 +1889,7 @@ class JarvisLive:
                 message=f"verification crashed: {e}")
         print(f"[Verify] {name}: {vres.status.value} "
               f"(confidence {vres.confidence:.2f}) — {vres.message}")
-        return f"{result}{verification_note(vres)}"
+        return (f"{result}{verification_note(vres)}", verdict_dict(vres, name))
 
     def _surface_content(self, name: str, args: dict, result) -> None:
         """M9: the single route from a tool result to the content panel.
@@ -3309,7 +3291,24 @@ class JarvisLive:
             print(f"[JARVIS] Reconnecting in {delay}s...")
             await asyncio.sleep(delay)
 
+def _configure_logging() -> None:
+    """One stdlib logging configuration for the app (brain roadmap Phase 1).
+
+    Modules already call logging.getLogger(__name__); without a root
+    handler their records vanish. Idempotent — a host (tests, embedding)
+    that configured logging keeps its own setup.
+    """
+    if logging.getLogger().handlers:
+        return
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
 def main():
+    _configure_logging()
     ui = JarvisUI("face.png")
     _perf_mark("ui_constructed")
 

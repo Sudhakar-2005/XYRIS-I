@@ -54,6 +54,23 @@ class VerificationResult:
         return self.status == VerificationStatus.VERIFIED
 
 
+def verdict_dict(vres: VerificationResult, tool: str = "") -> dict:
+    """The structured verdict — the machine-readable twin of the prose note.
+
+    Consumed by the automation adapters (a passed=False verdict ends the
+    node as an error even when the text looks fine). passed is False only
+    for FAILED: PARTIAL and UNVERIFIABLE stay honest uncertainty — not
+    fake success, and not a fabricated failure either.
+    """
+    return {
+        "tool": str(tool),
+        "status": str(vres.status.value),
+        "passed": vres.status != VerificationStatus.FAILED,
+        "confidence": float(vres.confidence or 0.0),
+        "detail": (vres.message or "").strip(),
+    }
+
+
 @dataclass
 class VerificationRule:
     """A rule for verifying a specific tool's result."""

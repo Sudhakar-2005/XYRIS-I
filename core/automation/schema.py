@@ -77,6 +77,7 @@ class VerificationState(str, Enum):
     VERIFIED = "verified"
     FAILED = "failed"
     UNVERIFIABLE = "unverifiable"
+    PARTIAL = "partial"
 
 
 class RunStatus(str, Enum):
@@ -184,26 +185,6 @@ class NodeResult:
             execution_time_ms=float(d.get("execution_time_ms", 0.0) or 0.0),
             metadata=dict(d.get("metadata") or {}),
         )
-
-    @classmethod
-    def from_tool_output(cls, output: str, *, timed_out: bool = False,
-                         refused: bool = False, duration_ms: float = 0.0) -> "NodeResult":
-        text = (output or "").strip()
-        if timed_out:
-            return cls(success=False, status="timeout", message=text,
-                       error_code="timeout", execution_time_ms=duration_ms)
-        if refused:
-            return cls(success=False, status="refused", message=text,
-                       error_code="refused", execution_time_ms=duration_ms)
-        lowered = text.lower()
-        fail_markers = (" failed:", " is not available.",
-                        " is currently disabled.", "timed out after")
-        failed = (not text) or any(m in lowered for m in fail_markers)
-        if failed:
-            return cls(success=False, status="error", message=text,
-                       error_code="tool_error", execution_time_ms=duration_ms)
-        return cls(success=True, status="ok", message=text,
-                   execution_time_ms=duration_ms)
 
 
 # -------------------------------------------------------------------- nodes
