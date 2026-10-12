@@ -729,6 +729,7 @@ class JarvisLive:
         self._speaking_lock       = threading.Lock()
         self._phone_active        = False   # True while phone mic is streaming; pauses PC mic
         self._pending_vision       = None    # (img_bytes, mime_type, question, angle) to inject after tool response
+        self._memory_notes: list[str] = []  # memory writes pending injection into the live context
         self._vision_cam_active    = False   # True if camera was opened for vision → auto-close after response
         self._vision_close_pending = False   # True after vision injected; next turn_complete closes camera
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
@@ -1672,6 +1673,7 @@ class JarvisLive:
             if key and value:
                 update_memory({category: {key: {"value": value}}})
                 print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
+                self._memory_notes.append(f"{category}/{key} = {value}")
             if not self.ui.muted:
                 self.ui.set_state("LISTENING")
             return types.FunctionResponse(
@@ -2130,6 +2132,29 @@ class JarvisLive:
             self._vision_busy = False
         return True
 
+    async def _flush_memory_notes(self) -> bool:
+        """Inject memory written mid-session into the live context.
+
+        Without this the model only sees memory captured at session start, so a
+        fact it just saved stays invisible until the next reconnect — the exact
+        'memory storage with no retrieval' gap. Sent right after the tool
+        response (same safe post-tool point as the vision frame), bounded to
+        one message per flush.
+        """
+        if not (self._memory_notes and self.session):
+            return False
+        notes = self._memory_notes[:]
+        self._memory_notes.clear()
+        text = ("SYS (memory): saved this session — " +
+                "; ".join(notes[:5]) +
+                ("\n…" if len(notes) > 5 else ""))
+        await self.session.send_client_content(
+            turns={"role": "user", "parts": [{"text": text}]},
+            turn_complete=True,
+        )
+        print(f"[Memory] 📤 injected {len(notes)} memory note(s) into live context")
+        return True
+
     async def _receive_audio(self):
         print("[JARVIS] 👂 Recv started")
         out_buf, in_buf = [], []
@@ -2280,6 +2305,7 @@ class JarvisLive:
                             function_responses=fn_responses
                         )
                         await self._flush_pending_vision()
+                        await self._flush_memory_notes()
         except Exception as e:
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()

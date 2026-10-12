@@ -349,5 +349,59 @@ class TestMemoryControllerNewActions(unittest.TestCase):
         self.assertIn("Unknown memory action", result)
 
 
+class TestMemoryHardening(unittest.TestCase):
+    """Phase 3: atomic writes, session cap config, dedupe, live injection."""
+
+    def test_save_memory_is_atomic_and_leaves_no_tmp(self):
+        from memory.memory_manager import MEMORY_PATH, save_memory, load_memory
+        save_memory({"notes": {"atomic_test": {"value": "v1", "updated": "2026-10-12"}}})
+        self.assertFalse(MEMORY_PATH.with_name(MEMORY_PATH.name + ".tmp").exists())
+        self.assertEqual(load_memory()["notes"]["atomic_test"]["value"], "v1")
+
+    def test_session_max_env_override_and_fallback(self):
+        import os
+        from memory.memory_manager import _session_max
+        old = os.environ.get("JARVIS_SESSION_MAX")
+        try:
+            os.environ["JARVIS_SESSION_MAX"] = "1"
+            self.assertEqual(_session_max(), 1)
+            os.environ["JARVIS_SESSION_MAX"] = "not-a-number"
+            self.assertEqual(_session_max(), 3)
+        finally:
+            if old is None:
+                os.environ.pop("JARVIS_SESSION_MAX", None)
+            else:
+                os.environ["JARVIS_SESSION_MAX"] = old
+
+    def test_identical_value_is_deduped_no_rewrite(self):
+        from memory.memory_manager import _recursive_update
+        target = {"profile": {"name": {"value": "sam", "updated": "2026-10-12"}}}
+        changed = _recursive_update(target, {"profile": {"name": {"value": "sam"}}})
+        self.assertFalse(changed, "same value must not count as a change")
+        changed2 = _recursive_update(target, {"profile": {"name": {"value": "alex"}}})
+        self.assertTrue(changed2)
+
+    def test_flush_memory_notes_injects_and_clears(self):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        import main as main_mod
+        dummy = MagicMock()
+        dummy._memory_notes = ["notes/todo = ship it"]
+        dummy.session = MagicMock()
+        dummy.session.send_client_content = AsyncMock()
+        ok = asyncio.run(main_mod.JarvisLive._flush_memory_notes(dummy))
+        self.assertTrue(ok)
+        self.assertEqual(dummy._memory_notes, [])
+        payload = dummy.session.send_client_content.call_args.kwargs["turns"]
+        self.assertIn("notes/todo = ship it", payload["parts"][0]["text"])
+
+        dummy2 = MagicMock()
+        dummy2._memory_notes = []
+        dummy2.session = MagicMock()
+        dummy2.session.send_client_content = AsyncMock()
+        self.assertFalse(asyncio.run(main_mod.JarvisLive._flush_memory_notes(dummy2)))
+        dummy2.session.send_client_content.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

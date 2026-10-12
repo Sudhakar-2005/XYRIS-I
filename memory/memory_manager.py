@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from datetime import datetime
 from threading import Lock
@@ -115,15 +116,28 @@ def _trim_to_limit(memory: dict) -> dict:
             pass
     return memory
 
+def _atomic_write(path: Path, text: str) -> None:
+    """Write text to path atomically (temp file + os.replace).
+
+    A crash mid-write can no longer truncate long_term.json or a session
+    transcript to partial JSON — readers always see the old or new file.
+    Caller must hold _lock when writing MEMORY_PATH.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
 def save_memory(memory: dict) -> None:
     if not isinstance(memory, dict):
         return
     memory = _trim_to_limit(memory)
     MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
-        MEMORY_PATH.write_text(
+        _atomic_write(
+            MEMORY_PATH,
             json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
         )
 
 
@@ -494,7 +508,15 @@ def clear_short_term_turns() -> None:
 
 # ── Session memory ─────────────────────────────────────────────────────────────
 
-_SESSION_MAX = 3   # safety cap — in practice 0-1 entries after pop
+_DEFAULT_SESSION_MAX = 3   # safety cap — in practice 0-1 entries after pop
+
+
+def _session_max() -> int:
+    """Session-summary cap; override with JARVIS_SESSION_MAX (>=1)."""
+    try:
+        return max(1, int(os.environ.get("JARVIS_SESSION_MAX", _DEFAULT_SESSION_MAX)))
+    except (TypeError, ValueError):
+        return _DEFAULT_SESSION_MAX
 
 
 def save_session_summary(summary: str, language: str = "") -> None:
@@ -513,13 +535,10 @@ def save_session_summary(summary: str, language: str = "") -> None:
     if language:
         entry["language"] = language
     sessions.append(entry)
-    memory["sessions"] = sessions[-_SESSION_MAX:]
+    memory["sessions"] = sessions[-_session_max():]
     with _lock:
         MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        _atomic_write(MEMORY_PATH, json.dumps(memory, indent=2, ensure_ascii=False))
     print(f"[Memory] 📝 Session saved ({entry['date']}): {summary[:60]}…")
 
 
@@ -538,10 +557,7 @@ def pop_last_session() -> dict | None:
                 return None
             entry = sessions.pop()          # remove the last entry
             memory["sessions"] = sessions
-            MEMORY_PATH.write_text(
-                json.dumps(memory, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            _atomic_write(MEMORY_PATH, json.dumps(memory, indent=2, ensure_ascii=False))
             return entry
         except Exception as e:
             print(f"[Memory] ⚠️ pop_last_session error: {e}")
@@ -573,7 +589,7 @@ def save_session_log(turns: list[str], summary: str = "", language: str = "") ->
     _SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     path = _SESSIONS_DIR / f"{ts}.json"
     try:
-        path.write_text(json.dumps(entry, indent=2, ensure_ascii=False), encoding="utf-8")
+        _atomic_write(path, json.dumps(entry, indent=2, ensure_ascii=False))
         print(f"[Memory] 💾 Session transcript saved: {path.name} ({len(turns)} turns)")
     except Exception as e:
         print(f"[Memory] ⚠️ save_session_log error: {e}")
