@@ -280,6 +280,15 @@ class Edge:
 
 @dataclass
 class Trigger:
+    """What makes a workflow fire.
+
+    MANUAL    — only via run()/start_run() or the HUD.
+    SCHEDULE  — every_minutes interval, checked on the engine's tick.
+    FILE_WATCH — polling snapshot diff on each tick (triggers.py:135):
+    the directory is globbed and compared to the previous snapshot. It is
+    NOT an OS filesystem watcher — creations between ticks are only seen
+    at the next poll.
+    """
     type: str = TriggerType.MANUAL.value
     config: dict[str, Any] = field(default_factory=dict)
 

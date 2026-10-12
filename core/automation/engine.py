@@ -163,6 +163,12 @@ class AutomationEngine:
                                   ", ".join(report.denied_permissions))
         if wf.status == WorkflowStatus.RUNNING.value:
             raise RuntimeError("workflow is already running")
+        # The status field alone never catches a live run: execution sets
+        # the RUN record to RUNNING, not wf.status, so the check above was
+        # effectively dead. Consult the runtime for a run actually in
+        # flight — the guard that check was meant to be (Phase 4).
+        if self.runtime.active_run_for(wf.id):
+            raise RuntimeError("workflow is already running")
 
     async def run(self, wf_id: str, *, mode: str = "live",
                   trigger: str = "manual",

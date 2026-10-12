@@ -717,6 +717,28 @@ class TestEngine(unittest.TestCase):
             self.assertEqual(len(eng.runs(wf.id)), 1)
             self.assertEqual(len(eng.runs()), 1)
 
+    def test_second_manual_run_refused_while_running(self):
+        """Phase 4: the RUNNING guard in _require_runnable is real."""
+        with tempfile.TemporaryDirectory() as tmp:
+            eng = self._engine(tmp, FakeDeps())
+            spec = make_workflow().to_dict()
+            spec["nodes"].insert(2, {"id": "d1", "type": "DELAY",
+                                     "config": {"seconds": 1}})
+            spec["edges"] = [{"source": "trg", "target": "t1"},
+                             {"source": "t1", "target": "d1"},
+                             {"source": "d1", "target": "end"}]
+            wf = eng.create(spec, activate=True)
+
+            async def scenario():
+                task = asyncio.ensure_future(eng.run(wf.id))
+                await asyncio.sleep(0.15)
+                with self.assertRaises(RuntimeError):
+                    await eng.run(wf.id)
+                return await task
+
+            rec = run_async(scenario())
+            self.assertEqual(rec.status, RunStatus.COMPLETED.value)
+
 
 if __name__ == "__main__":
     unittest.main()
