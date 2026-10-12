@@ -7,8 +7,9 @@ Rules, in priority order:
    them in, and anything unknown defaults to safe + no permissions, which
    the runtime then re-checks through the real dispatcher gate anyway.
 3. Non-tool node types get a static, conservative policy.
-4. Workflow risk = max(node risks); the runtime refuses forbidden, pauses
-   on dangerous, exactly like the live dispatcher.
+4. Workflow risk = max(node risks); validate() refuses a workflow
+   containing a forbidden operation, and the runtime never auto-retries
+   dangerous nodes — every tool call is re-gated by the live dispatcher.
 """
 from __future__ import annotations
 

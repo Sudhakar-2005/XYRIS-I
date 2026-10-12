@@ -15,6 +15,11 @@ This module does NOT replace confirm.py or undo.py — it layers on top:
   - log_action() records what happened for the audit trail
   - check_rate_limit() prevents a model in a loop from hammering dangerous ops
   - should_confirm() decides if an action needs the HUD confirmation gate
+
+Honest status (V0.1): classify() and should_confirm() are wired at tool load;
+log_action() and check_rate_limit() are AVAILABLE APIs with no production
+callers yet — the event bus and PermissionLedger are the live observability
+and enforcement layers. Do not describe the audit trail as active.
 """
 from __future__ import annotations
 
