@@ -26,6 +26,7 @@ import io
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -407,6 +408,62 @@ class TestDispatcherEnforcement(unittest.TestCase):
     def test_live_instance_loads_the_ledger_in_init(self):
         src = inspect.getsource(main.JarvisLive.__init__)
         self.assertIn("PermissionLedger()", src)
+
+
+class TestVerifyStateEmitter(unittest.TestCase):
+    """VERIFYING is a real state: it lights only while a check runs."""
+
+    @staticmethod
+    def _capture(coro):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            return asyncio.run(asyncio.wait_for(coro, 8.0))
+
+    def _live_with_verifier(self, sleep_s: float | None = None) -> main.JarvisLive:
+        handler = (lambda parameters: time.sleep(sleep_s) or "slept") \
+            if sleep_s is not None else \
+            (lambda parameters: "probe ran")
+        rec = ActionRecord(
+            name="probe_v", description="verifier probe",
+            handler=handler,
+            valid=True,
+            policy=ToolPolicy(verification="verifier",
+                              timeout=0.3 if sleep_s is not None else 5))
+        live = _make_live(ActionRegistry({"probe_v": rec},
+                                         logger=lambda m: None))
+        live.ui.muted = False
+        return live
+
+    def test_verifying_emitted_then_listening(self):
+        live = self._live_with_verifier()
+        async def fake_verify(name, args, result):
+            return (result + " [verified]", {"tool": name, "status": "passed",
+                                             "passed": True, "confidence": .9,
+                                             "detail": ""})
+        live._run_verification = fake_verify
+        _FakeUI.states = []
+        self._capture(live._execute_tool(_fc("probe_v")))
+        self.assertIn("VERIFYING", _FakeUI.states)
+        self.assertEqual(_FakeUI.states[-1], "LISTENING")
+
+    def test_no_verifying_when_muted(self):
+        live = self._live_with_verifier()
+        async def fake_verify(name, args, result):
+            return (result, None)
+        live._run_verification = fake_verify
+        live.ui.muted = True
+        _FakeUI.states = []
+        self._capture(live._execute_tool(_fc("probe_v")))
+        self.assertNotIn("VERIFYING", _FakeUI.states)
+
+    def test_timed_out_dispatch_never_claims_verification(self):
+        # A crashed/timed-out dispatch already told the model the truth —
+        # verification must be skipped, so VERIFYING may not light.
+        live = self._live_with_verifier(sleep_s=1.0)
+        live._run_verification = None  # must never be called
+        _FakeUI.states = []
+        self._capture(live._execute_tool(_fc("probe_v")))
+        self.assertNotIn("VERIFYING", _FakeUI.states)
 
 
 class TestSourceGuards(unittest.TestCase):

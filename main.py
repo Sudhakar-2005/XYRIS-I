@@ -1826,6 +1826,10 @@ class JarvisLive:
         # already told the model the truth — verifying it would only add a
         # second opinion about an event that did not happen.
         if not _failed and policy.verification == "verifier":
+            # VERIFYING lights exactly while a real check runs — never as
+            # decoration; muted HUDs stay untouched like every other state.
+            if not self.ui.muted:
+                self.ui.set_state("VERIFYING")
             result, verdict = await self._run_verification(name, args, result)
 
         # M11: the bus hears every turn of the wheel — success and failure
