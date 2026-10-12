@@ -10,6 +10,7 @@ from pathlib import Path
 from datetime import datetime
 
 from core.undo import push_undo
+from core import confirm
 
 try:
     import pyautogui
@@ -101,6 +102,28 @@ def _execute_generated_code(code: str, player=None) -> str:
     except Exception as e:
         print(f"[Desktop] Exec error: {e}\nCode:\n{code[:300]}")
         return f"Execution error: {e}"
+
+
+def _run_after_banner(key: str, task_text: str, code: str, player=None) -> str:
+    """Park generated-code execution behind the on-screen confirmation gate.
+
+    desktop_control's tool-level requires_confirmation stays False because
+    clean/organize are reversible (undo pushes, not banners — §3.14 doctrine).
+    ONLY this path exec()s model-generated code, so only this path asks a
+    human. The banner shows the task plus a preview of the code that will run.
+    """
+    if not code or code.strip() == "UNSAFE":
+        return "This action cannot be performed safely."
+    if confirm.pending_title():
+        return ("There is already a confirmation waiting on screen. "
+                "Ask the user to answer that one first.")
+    preview = " ".join(code.split())[:160]
+    return confirm.request(
+        key=key,
+        title="Run generated desktop code",
+        detail=f"{task_text} — code: {preview}",
+        run=lambda c=code, p=player: _execute_generated_code(c, player=p),
+    )
 
 
 def _ask_gemini_for_desktop_action(task: str) -> str:
@@ -510,12 +533,14 @@ def desktop_control(
                 player.write_log("[Desktop] Generating action...")
 
             code = _ask_gemini_for_desktop_action(actual_task)
-            return _execute_generated_code(code, player=player)
+            return _run_after_banner("desktop_task", actual_task, code,
+                                     player=player)
 
         else:
             if action:
                 code = _ask_gemini_for_desktop_action(action)
-                return _execute_generated_code(code, player=player)
+                return _run_after_banner("desktop_action", action, code,
+                                         player=player)
             return "No action or task specified."
 
     except Exception as e:
@@ -532,7 +557,7 @@ TOOL = {
     "requires_confirmation": False,
     "supports_undo": True,
     "verification": "none",
-    "description": "Controls the desktop: wallpaper, organize, clean, list, stats.",
+    "description": "Controls the desktop: wallpaper, organize, clean, list, stats. 'task' (or a bare action) asks Gemini to write desktop code — that code is NOT run until the user presses CONFIRM on the on-screen banner.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
