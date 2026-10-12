@@ -110,3 +110,14 @@ flowchart TD
 2. **Security regression while refactoring gates** — mitigation: `test_tool_metadata.py` confirm-invariants run in Phase 1 first, parity tests added before deleting the mirror.
 3. **Test-count pressure** — baseline 1,454; phases add tests, never delete coverage silently; deletions only with import audits.
 4. **Doc drift** — each phase updates `docs/brain/*` errata; disallowed claims re-checked (Phase 2 checklist).
+
+## Errata - Phase 2-8 completion record (2026-10-12)
+
+- **Phase 2:** retired planner/reasoning/self_checker/replanner/task_graph/tool_registry (3,399 lines) + 12 dormant test files; fixed prompt.txt's "planning agent" line and the safety_manager/risk docstring lies. Commit `316f476`.
+- **Phase 3:** atomic memory writes (temp+os.replace at all 4 write sites), `JARVIS_SESSION_MAX` override, dedupe verified value-level, mid-session injection (`main._flush_memory_notes` after tool responses). Commit `0a13002`.
+- **Phase 4 (M3 waiver):** fix-or-delete decided WITHOUT labeled M3 data — planner was defective (duplicate ids, string risk, logged-only validate) and never wired; model chaining + workflow generator remain the only two plan producers (deleted in `316f476`). The `engine.py:164` RUNNING guard was dead (execution never sets `wf.status`); now consults `runtime.active_run_for` with a regression test. Commits `316f476`, `d433e4e`.
+- **Phase 5:** VERIFYING emits only while a real check runs (main.py, tests in test_permission_enforcement). Per-strategy false-fail matrices need labeled outcomes — NEEDS-DATA in EVAL_SCORECARD.md (M5). Commit `dd19c93`.
+- **Phase 6:** risk #1 closed — desktop_control's generated-code exec now parks behind `confirm.request` (tests/test_phase6_hardening.py); risk #4 closed — setup write merges api_keys.json. **ACCEPTED with rationale:** `server.py:187` firewall `subprocess.run([bat_path], shell=True)` — bat_path is code-generated internally and port comes from local config, not user-controlled input. Store idempotency already satisfied (RLock + atomic replace, store.py:59-65). Commit `02b3cee`.
+- **Phase 7:** `core/model_api.py` formalizes ModelCall/ModelResult (never raises, scrubs configured keys); `ModelManager.record` now returns `""|"quota"|"provider"` so the ladder cools on connection/5xx/timeout errors, not just 429s; gemini.call prints the right reason. Local-model latency echo drill pending an Ollama host — NEEDS-DATA. Commits `d433e4e`, `a986a38`.
+- **Phase 8:** `python tools/eval_scorecard.py` produces the M1-M9 scorecard. First run: **472 passed / 0 failed** across groups; M4 NEEDS-DATA; M1/M2/M5/M6/M7 carry contract scores + dataset notes; 117 session transcripts available for dataset building. Output: `docs/brain/EVAL_SCORECARD.md`. Commit pending with this doc.
+- **Phase 9:** remains V0.2+ non-goal as planned (no native work without Phase 8 measurements).
