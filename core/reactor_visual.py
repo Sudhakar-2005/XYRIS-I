@@ -1,0 +1,247 @@
+"""Reactor visual model — pure, Qt-free logic for the AETHER-I neural core.
+
+Everything paint-independent lives here so state→motion mapping, the neural
+graph, particles and signals can be unit-tested without a display. ui.py
+(HudCanvas) consumes these functions from its QPainter code.
+
+Honesty contract (see docs/brain/CORE_VISUAL_DESIGN.md):
+* Motion intensity derives ONLY from the real AppState; unknown states get
+  the calm default — never fabricated activity.
+* No progress percentages anywhere: the segmented status ring shows a state
+  sweep, not completion. Segments never imply task progress.
+* Particle and signal counts are bounded constants — no spawning storms.
+* Reduced motion collapses every rate toward stillness but keeps colors and
+  the state label so the UI stays informative.
+"""
+from __future__ import annotations
+
+import math
+import random
+from dataclasses import dataclass
+
+NODE_COUNT = 42
+EDGE_NEIGHBOURS = 2
+MAX_PARTICLES = 28
+PARTICLE_SEED = 1234
+SIGNAL_COUNT = 5
+PULSE_TTL = 1.2          # seconds a transition pulse stays visible
+
+
+# ── motion profile per state ────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class Motion:
+    ring_rate: float       # multiplier for the existing sweeping arcs
+    spin: float            # neural sphere rotation, rad/s
+    particle_budget: int   # bounded particle count for this state
+    signal_speed: float    # edge traversal per second (0..1 fraction)
+    glow: float            # extra central lift (0..0.2), never a fake meter
+    scan: bool             # draw the verification-style scan arc
+
+
+# Calm default — also the truthful answer for unknown/unmapped states.
+_DEFAULT = Motion(1.0, 0.10, 6, 0.18, 0.00, False)
+
+STATE_MOTION: dict[str, Motion] = {
+    "IDLE":                Motion(1.0, 0.07,  4, 0.12, 0.00, False),
+    "SLEEPING":            Motion(0.6, 0.05,  2, 0.08, 0.00, False),
+    "LISTENING":           Motion(1.2, 0.16, 10, 0.28, 0.06, False),
+    "MUTED":               Motion(0.7, 0.06,  2, 0.10, 0.00, False),
+    "UNDERSTANDING":       Motion(2.2, 0.30, 12, 0.42, 0.10, False),
+    "THINKING":            Motion(2.6, 0.34, 14, 0.46, 0.12, False),
+    "PLANNING":            Motion(2.4, 0.32, 14, 0.50, 0.10, False),
+    "EXECUTING":           Motion(3.0, 0.40, 18, 0.58, 0.14, False),
+    "OBSERVING":           Motion(2.0, 0.26, 12, 0.40, 0.08, False),
+    "VERIFYING":           Motion(2.4, 0.30, 12, 0.44, 0.10, True),
+    "SPEAKING":            Motion(2.8, 0.36, 16, 0.52, 0.12, False),
+    "WAITING_CONFIRMATION": Motion(0.6, 0.08, 6, 0.14, 0.04, False),
+    "RECOVERING":          Motion(1.4, 0.18, 8, 0.26, 0.05, False),
+    "ERROR":               Motion(0.5, 0.06, 4, 0.10, 0.02, False),
+    "INITIALISING":        Motion(1.6, 0.22, 10, 0.32, 0.06, False),
+}
+# V3 aliases for reading clarity; identical profiles are fine.
+STATE_MOTION.setdefault("PROCESSING", STATE_MOTION["EXECUTING"])
+
+# States whose transition earns a visible neural pulse. None → no pulse.
+_PULSE_KINDS = {
+    "LISTENING": "listen", "UNDERSTANDING": "think", "THINKING": "think",
+    "PLANNING": "plan", "EXECUTING": "tool", "OBSERVING": "observe",
+    "VERIFYING": "verify", "SPEAKING": "speak",
+    "WAITING_CONFIRMATION": "confirm", "ERROR": "error",
+    "RECOVERING": "recover",
+}
+
+
+def motion_for(state: str | None) -> Motion:
+    """Motion profile for *state*. Unknown → calm default (truthful general
+    state, never fabricated intensity)."""
+    return STATE_MOTION.get(str(state or "").strip().upper(), _DEFAULT)
+
+
+def pulse_kind_for(state: str | None) -> str | None:
+    return _PULSE_KINDS.get(str(state or "").strip().upper())
+
+
+def pulse_alpha(age: float, ttl: float = PULSE_TTL) -> float:
+    """0..1 brightness boost for a transition pulse; 1 at birth → 0 at ttl."""
+    if age < 0.0:
+        return 0.0
+    if age >= ttl:
+        return 0.0
+    x = 1.0 - age / ttl
+    return x * x * (3.0 - 2.0 * x)        # smoothstep out
+
+
+def reduced_motion_profile() -> Motion:
+    """Everything nearly still; colors and the state label carry meaning."""
+    return Motion(0.12, 0.01, 0, 0.0, 0.0, False)
+
+
+# ── neural graph (deterministic, no RNG at import) ──────────────────────────
+
+def _fib_sphere(n: int) -> tuple[tuple[float, float, float], ...]:
+    """Evenly distributed unit-sphere points (Fibonacci lattice) — stable
+    across runs, so tests and visuals never jitter between launches."""
+    ga = math.pi * (3.0 - math.sqrt(5.0))
+    pts = []
+    for i in range(n):
+        y = 1.0 - (i / max(1, n - 1)) * 2.0
+        rad = math.sqrt(max(0.0, 1.0 - y * y))
+        th = ga * i
+        pts.append((math.cos(th) * rad, y, math.sin(th) * rad))
+    return tuple(pts)
+
+
+NODES = _fib_sphere(NODE_COUNT)
+TIERS: tuple[int, ...] = tuple(0 if i % 5 == 0 else (1 if i % 2 == 0 else 2)
+                               for i in range(NODE_COUNT))
+
+
+def _nearest_edges(n: int, k: int) -> tuple[tuple[int, int], ...]:
+    seen: set[tuple[int, int]] = set()
+    edges: list[tuple[int, int]] = []
+    for i in range(n):
+        dists = sorted(
+            ((sum((a - b) ** 2 for a, b in zip(NODES[i], NODES[j])), j)
+             for j in range(n) if j != i),
+            key=lambda t: t[0])
+        for _, j in dists[:k]:
+            key = (i, j) if i < j else (j, i)
+            if key not in seen:
+                seen.add(key)
+                edges.append(key)
+    return tuple(edges)
+
+
+EDGES = _nearest_edges(NODE_COUNT, EDGE_NEIGHBOURS)
+
+
+def rotate_y(pt: tuple[float, float, float], ang: float) -> tuple[float, float, float]:
+    x, y, z = pt
+    c, s = math.cos(ang), math.sin(ang)
+    return (x * c + z * s, y, -x * s + z * c)
+
+
+def project_nodes(ang: float) -> tuple[tuple[float, float, float, int], ...]:
+    """Rotate the graph about Y and project to 2D.
+
+    Returns ((sx, sy, depth, tier), ...): sx/sy in [-1, 1], depth in [0, 1]
+    (1 = nearest the viewer) for brightness/size, plus the node tier.
+    """
+    out = []
+    for pt, tier in zip(NODES, TIERS):
+        x, y, z = rotate_y(pt, ang)
+        out.append((x, y, (z + 1.0) * 0.5, tier))
+    return tuple(out)
+
+
+def signal_positions(t: float, speed: float,
+                     count: int = SIGNAL_COUNT) -> tuple[tuple[int, float], ...]:
+    """(edge_index, frac) for each travelling signal — frac in [0,1] is how
+    far along the edge the pulse currently is. Deterministic in *t*."""
+    if speed <= 0.0 or not EDGES:
+        return ()
+    out = []
+    step = max(1, len(EDGES) // max(1, count))
+    for i in range(min(count, len(EDGES))):
+        frac = (t * speed + i / max(1, count)) % 1.0
+        out.append(((i * step) % len(EDGES), frac))
+    return tuple(out)
+
+
+# ── status ring (state sweep — never task progress) ─────────────────────────
+
+def status_lit(state: str | None) -> float:
+    """Fraction of the segmented ring shown 'hot' for *state*.
+
+    This is a STATE intensity, not completion: 1.0 for ERROR (fully
+    attention), ~0.3 sweep for working states, 0.12 rest. It never rises
+    with task progress because no task-progress source exists here.
+    """
+    s = str(state or "").strip().upper()
+    if s == "ERROR":
+        return 1.0
+    if s == "WAITING_CONFIRMATION":
+        return 0.35
+    if s in ("IDLE", "SLEEPING", "MUTED"):
+        return 0.12
+    if s in ("LISTENING", "RECOVERING", "INITIALISING"):
+        return 0.25
+    if s in ("UNDERSTANDING", "THINKING", "PLANNING", "EXECUTING",
+             "OBSERVING", "VERIFYING", "SPEAKING", "PROCESSING"):
+        return 0.30
+    return 0.12                                     # unknown → rest
+
+
+# ── particles (bounded, deterministic seeding, no physics) ──────────────────
+
+@dataclass
+class Particle:
+    theta: float     # azimuth
+    phi: float       # polar angle
+    dist: float      # 0..1 shell distance (0 = centre, 1 = rim)
+    speed: float     # azimuth drift, rad/s
+    twinkle: float   # phase offset for brightness
+
+
+def spawn_particles(budget: int, seed: int = PARTICLE_SEED) -> list[Particle]:
+    """Exactly *budget* particles (hard-capped at MAX_PARTICLES), seeded so
+    the field is reproducible. No uncontrolled spawning exists by design."""
+    budget = max(0, min(int(budget), MAX_PARTICLES))
+    rng = random.Random(seed)
+    return [Particle(theta=rng.uniform(0, math.tau),
+                     phi=rng.uniform(0.15, math.pi - 0.15),
+                     dist=rng.uniform(0.45, 1.0),
+                     speed=rng.uniform(0.05, 0.22) * (1 if rng.random() < .5 else -1),
+                     twinkle=rng.uniform(0, math.tau))
+            for _ in range(budget)]
+
+
+def step_particles(parts: list[Particle], dt: float,
+                   spin: float) -> list[Particle]:
+    """Advance particles; keeps the list at its current (bounded) size.
+
+    Particles orbit with the sphere and breathe along the shell. If the
+    caller shrank the budget, extras are dropped here — never added.
+    """
+    dt = max(0.0, min(dt, 0.1))                     # clamp: no jumps on resume
+    for p in parts:
+        p.theta += (p.speed + spin * 0.6) * dt
+        p.dist += math.sin(p.twinkle + dt) * 0.0    # shell stays bounded
+        p.twinkle += dt * 1.7
+    return parts
+
+
+def project_particle(p: Particle, ang: float) -> tuple[float, float, float]:
+    """→ (sx, sy, depth) in [-1,1]x[-1,1]x[0,1], coherent with the sphere."""
+    sp, cp = math.sin(p.phi), math.cos(p.phi)
+    x = sp * math.cos(p.theta) * p.dist
+    y = cp * p.dist
+    z = sp * math.sin(p.theta) * p.dist
+    xr, _, zr = rotate_y((x, y, z), ang)
+    return xr, y, (zr + 1.0) * 0.5
+
+
+def particle_alpha(p: Particle, t: float) -> float:
+    """Twinkle 0.10..0.55 — subtle, never screen glow."""
+    return 0.10 + 0.22 * (1.0 + math.sin(p.twinkle + t * 1.3)) * 0.5 + 0.11
