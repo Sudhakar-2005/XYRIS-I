@@ -34,8 +34,8 @@
 |---|---|---|---|
 | IDLE / SLEEPING | breathe, 4/2 particles | default cyan | |
 | LISTENING | medium spin, green accent, waveform = real mic level | green | mic-off ⇒ MUTED, never implies listening |
-| UNDERSTANDING / THINKING / PLANNING | fast rings, signals 0.42–0.50, glow ≤0.12 | amber | PLANNING/OBSERVING have **no emitter yet** (app_state docstring); they render honestly only if ever set |
-| EXECUTING / OBSERVING | fastest, 18 particles | amber | real dispatch only (`_execute_tool` sets it) |
+| UNDERSTANDING / THINKING / PLANNING | fast rings, signals 0.42–0.50, glow ≤0.12 | amber | PLANNING emitted by real plan producers: dev_agent's planner model, automation `generate` |
+| EXECUTING / OBSERVING | fastest, 18 particles | amber | real dispatch only (`_execute_tool` sets it); OBSERVING covers capture → flush of a vision frame |
 | VERIFYING | + scan arc | amber | set only while a real check runs (Phase 5 of BRAIN roadmap) |
 | SPEAKING | voice ring + pulses = real playback amplitude | orange | |
 | WAITING_CONFIRMATION | slow, 0.35 lit sweep | orange | banner shows the actual pending action (`confirm.pending_title`) |
