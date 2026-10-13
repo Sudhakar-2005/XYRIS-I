@@ -42,6 +42,12 @@ except Exception:      # pragma: no cover — HUD must never die over cosmetics
     HoloAvatar = None
 
 try:
+    # Pure visual model for the neural core (state→motion, graph, particles).
+    from core import reactor_visual as _rviz
+except Exception:      # pragma: no cover — fall back to plain reactor
+    _rviz = None
+
+try:
     # V3 state machine: one vocabulary for HUD, avatar and activity log.
     from core.app_state import WORKING_STATES, transition as _state_transition
 except Exception:      # pragma: no cover — HUD falls back to raw strings
@@ -455,6 +461,74 @@ class HudCanvas(QWidget):
         self._tmr.timeout.connect(self._step)
         self._tmr.start(16)
 
+        # ── neural core state (Phase 2–4 of the CORE_VISUAL design) ──────
+        # Pulses are keyed by kind and only ever written by a real
+        # app_state transition (see _on_state_event) — never by a timer.
+        self._pulses: dict[str, float] = {}
+        # Bounded particle field, stepped at 60 Hz in _step(), painted only.
+        if _rviz is not None:
+            self._particles = _rviz.spawn_particles(
+                _rviz.motion_for(self.state).particle_budget)
+        else:
+            self._particles = []
+        self._reduced_motion = False
+        self._sync_reduced_motion()
+        try:
+            hints = QApplication.styleHints()
+            hints.reducedMotionChanged.connect(self._sync_reduced_motion)
+        except Exception:      # pragma: no cover — older PyQt6 builds
+            pass
+        # One state listener for the whole canvas; removed in closeEvent so
+        # the app_state module never accumulates dead widget references.
+        try:
+            from core import app_state as _app_state_mod
+            _app_state_mod.add_listener(self._on_state_event)
+            self._state_listener_attached = True
+        except Exception:      # pragma: no cover
+            self._state_listener_attached = False
+
+    # ── lifecycle ───────────────────────────────────────────────────────────
+
+    def _sync_reduced_motion(self, *_):
+        """Qt reduced-motion preference drives the whole animation budget."""
+        try:
+            self._reduced_motion = bool(
+                QApplication.styleHints().reducedMotion)
+        except Exception:      # pragma: no cover
+            self._reduced_motion = False
+
+    def _on_state_event(self, new: str, old: str, source: str) -> None:
+        """Real state transition → brief neural pulse.
+
+        Deduplicated: the same kind re-delivered within 150 ms does not
+        restart the pulse (late/duplicate deliveries are harmless — alpha is
+        age-based, so out-of-order events simply fade). Any thread may call
+        this; it only writes one float into a small dict.
+        """
+        if _rviz is None:
+            return
+        kind = _rviz.pulse_kind_for(new)
+        if not kind:
+            return
+        now = time.monotonic()
+        if kind in self._pulses and now - self._pulses[kind] < 0.15:
+            return
+        self._pulses[kind] = now
+
+    def closeEvent(self, e) -> None:
+        try:
+            self._tmr.stop()
+        except Exception:
+            pass
+        if getattr(self, "_state_listener_attached", False):
+            try:
+                from core import app_state as _app_state_mod
+                _app_state_mod.remove_listener(self._on_state_event)
+            except Exception:
+                pass
+            self._state_listener_attached = False
+        super().closeEvent(e)
+
     def glance(self, dx: float, dy: float, hold: float = 1.1) -> None:
         """Ask the avatar to look somewhere for a moment (see HoloAvatar.glance)."""
         try:
@@ -591,7 +665,23 @@ class HudCanvas(QWidget):
         # Integrated, not derived from absolute time: multiplying wall-clock by
         # a rate that changes with state jumps the rings the instant JARVIS
         # starts talking. Same lesson the head's sway taught.
-        self._core_phase += min(0.10, max(0.0, dt))
+        self._core_phase += min(0.10, max(0.0, dt)) * (0.12 if self._reduced_motion else 1.0)
+
+        # Neural particles: stepped here (60 Hz, has dt) so paint only draws.
+        # Budget follows the state's profile; reduced motion → 0 (capped at
+        # spawn time, so the list can only shrink — never spawn unbounded).
+        if _rviz is not None:
+            want = (0 if self._reduced_motion
+                    else _rviz.motion_for(self.state).particle_budget)
+            if len(self._particles) > want:
+                del self._particles[want:]
+            elif len(self._particles) < want:
+                self._particles.extend(_rviz.spawn_particles(
+                    want - len(self._particles),
+                    seed=_rviz.PARTICLE_SEED + len(self._particles)))
+            _rviz.step_particles(self._particles, dt,
+                                 0.0 if self._reduced_motion
+                                 else _rviz.motion_for(self.state).spin)
 
         if self._avatar is not None and self.hud_style == "face":
             self._avatar.step(dt, amp, speaking=self.speaking,
@@ -698,6 +788,120 @@ class HudCanvas(QWidget):
             return qcol(C.PRI), qcol(C.ACC)
         return qcol(C.PRI), (self._state_accent() or qcol(C.PRI_DIM))
 
+    # ── neural core layers (Phase 2–3) ──────────────────────────────────────
+
+    def _paint_status_ring(self, p, cx, cy, r, t, m, acc, blend):
+        """Segmented state ring at the rim — a STATE sweep, never progress."""
+        if _rviz is None:
+            return
+        rad = r * 1.035
+        segs, lit_frac = 48, _rviz.status_lit(self.state)
+        hot = int(segs * lit_frac)
+        lit = max(1, hot) if hot else 0
+        box = QRectF(cx - rad, cy - rad, rad * 2, rad * 2)
+        base = (0.0 if self._reduced_motion
+                else t * (14.0 if m else 10.0)) % 360.0
+        seg_deg, gap_deg = 5.4, 7.5 - 5.4        # 48 segments → 7.5° pitch
+        dim = 0.07 if lit == 0 else 0.10
+        p.setPen(QPen(blend(acc if lit else self._core_colours()[0], dim), 2.4))
+        for i in range(segs):
+            a = base + i * (360.0 / segs)
+            p.drawArc(box, int(a * 16), int(seg_deg * 16))
+        if lit:
+            # Scan head: lit window rotates with the state's ring rate (or
+            # sits static for ERROR — controlled warning, never flashing).
+            if not (self.state == "ERROR" or self._reduced_motion):
+                base = (t * 26.0) % 360.0
+            p.setPen(QPen(blend(acc, 0.75), 2.6))
+            for k in range(lit):
+                a = base + k * (360.0 / segs)
+                p.drawArc(box, int(a * 16), int(seg_deg * 16))
+
+    def _paint_neural(self, p, cx, cy, r, t, m, main, acc, blend):
+        """Layer B: 42-node sphere, edges, travelling signals, pulses.
+
+        Brightness derives from real state motion + transition pulses only —
+        a visual representation of system activity, not model internals.
+        """
+        if _rviz is None:
+            return
+        disc = r * 0.66
+        spin = 0.0 if self._reduced_motion else (m.spin if m else 0.1) * t
+        nodes = _rviz.project_nodes(spin)
+
+        # pulse boost: the strongest recent transition brightens the layer
+        # (suppressed under reduced motion — no flashing, colour + label only)
+        boost = 0.0
+        now = time.monotonic()
+        for kind in list(self._pulses):
+            a = _rviz.pulse_alpha(now - self._pulses[kind])
+            if a <= 0.0 or self._reduced_motion:
+                self._pulses.pop(kind, None)
+            elif a > boost:
+                boost = a
+        act = (m.signal_speed if m else 0.15) * (1.0 if not self._reduced_motion else 0.0)
+        act = max(act, boost * 0.5)
+
+        # edges
+        pts = [(cx + nx * disc, cy + ny * disc, d)
+               for nx, ny, d, _ in nodes]
+        p.setPen(Qt.PenStyle.NoPen)
+        for i, j in _rviz.EDGES:
+            xi, yi, di = pts[i]
+            xj, yj, dj = pts[j]
+            dep = (di + dj) * 0.5
+            a = 0.05 + dep * 0.13 + boost * 0.20
+            p.setPen(QPen(blend(main, a), 1))
+            p.drawLine(QLineF(xi, yi, xj, yj))
+
+        # travelling signals — only when a state provides real activity
+        for eidx, frac in _rviz.signal_positions(t, act if not self._reduced_motion else 0.0):
+            i, j = _rviz.EDGES[eidx]
+            xi, yi, _ = pts[i]
+            xj, yj, _ = pts[j]
+            sx, sy = xi + (xj - xi) * frac, yi + (yj - yi) * frac
+            p.setPen(QPen(blend(qcol(C.WHITE), 0.55 + boost * 0.4), 2))
+            p.drawEllipse(QPointF(sx, sy), 1.6, 1.6)
+
+        # nodes — three brightness tiers, depth-parallaxed
+        for (nx, ny, d, tier), (px, py, pd) in zip(nodes, pts):
+            tw = (0.30 if tier == 0 else (0.18 if tier == 1 else 0.10))
+            a = tw + d * 0.45 + (0.25 if tier == 0 else 0.0) * (0.4 + boost)
+            rad = 1.1 + d * 1.9 + (0.7 if tier == 0 else 0.0)
+            p.setPen(QPen(blend(main, min(0.9, a)), 1))
+            p.setBrush(QBrush(blend(qcol(C.WHITE), min(0.8, a * 0.9))))
+            p.drawEllipse(QPointF(px, py), rad, rad)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+    def _paint_particles(self, p, cx, cy, r, t, m, main, blend):
+        """Layer D: bounded orbiting particles (budget from state profile)."""
+        if _rviz is None or self._reduced_motion or not self._particles:
+            return
+        disc = r * 0.82
+        spin = (m.spin if m else 0.1) * t
+        for part in self._particles:
+            sx, sy, d = _rviz.project_particle(part, spin)
+            a = _rviz.particle_alpha(part, t) * (0.35 + d * 0.65)
+            p.setPen(QPen(blend(main, min(0.6, a)), 1))
+            p.setBrush(QBrush(blend(main, min(0.5, a))))
+            px, py = cx + sx * disc, cy + sy * disc
+            p.drawEllipse(QPointF(px, py), 1.0 + d, 1.0 + d)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+    def _paint_scan(self, p, cx, cy, r, t, acc, blend):
+        """VERIFYING only: one restrained scan arc (honest — set only while
+        a real check runs, cleared by the app state itself)."""
+        if self.state != "VERIFYING" or self._reduced_motion:
+            return
+        rad = r * 0.475
+        box = QRectF(cx - rad, cy - rad, rad * 2, rad * 2)
+        base = (t * 140.0) % 360.0
+        p.setPen(QPen(blend(acc, 0.55), 1.6))
+        p.drawArc(box, int(base * 16), int(70 * 16))
+        p.setPen(QPen(blend(acc, 0.25), 1.2))
+        p.drawArc(box, int((base + 78) * 16), int(30 * 16))
+
+
     def _paint_core(self, p: QPainter, cx: float, cy: float, r: float,
                     W: float = 0.0, H: float = 0.0):
         """Draw the reactor at (cx, cy) with outer radius r, using the whole
@@ -707,6 +911,7 @@ class HudCanvas(QWidget):
         amp = self._amp_disp
         t = self._core_phase
         live = (self.speaking or amp > 0.04) and not self.muted
+        m = _rviz.motion_for(self.state) if _rviz is not None else None
 
         def blend(col: QColor, a: float) -> QColor:
             """Pre-mix onto the background instead of asking Qt to composite.
@@ -727,7 +932,8 @@ class HudCanvas(QWidget):
         # washes the whole disc a flat dim blue and reads as fog. Ending it at
         # two thirds leaves it a body of light with somewhere to fall off to,
         # which is what makes it look lit rather than tinted.
-        lift = 1.0 + 0.55 * amp + (0.18 if self.speaking else 0.0)
+        lift = 1.0 + 0.55 * amp + (0.18 if self.speaking else 0.0) \
+               + ((m.glow if m else 0.0) if not self._reduced_motion else 0.0)
         p.setPen(Qt.PenStyle.NoPen)
         for gr, a0, a1 in ((r * 0.70, 0.30, 0.0), (r * 0.34, 0.34, 0.0)):
             g = QRadialGradient(cx, cy, gr)
@@ -743,11 +949,11 @@ class HudCanvas(QWidget):
         #    They are what set the scale: the eye reads the reactor as filling
         #    the room rather than sitting in the middle of it.
         if W > 40 and H > 40:
-            m, arm = min(W, H) * 0.035, min(W, H) * 0.055
+            mrg, arm = min(W, H) * 0.035, min(W, H) * 0.055
             p.setPen(QPen(blend(main, 0.45), 1.4))
             for sx, sy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
-                x = cx + sx * (W / 2 - m)
-                y = cy + sy * (H / 2 - m)
+                x = cx + sx * (W / 2 - mrg)
+                y = cy + sy * (H / 2 - mrg)
                 p.drawLine(QLineF(x, y, x - sx * arm, y))
                 p.drawLine(QLineF(x, y, x, y - sy * arm))
 
@@ -787,11 +993,20 @@ class HudCanvas(QWidget):
         p.setPen(QPen(blend(main, 0.18), 1))
         p.drawLines(minor)
 
+        # 5b. Segmented status ring — state sweep at a speed of its own,
+        #     distinct from every other ring (never same rate/direction).
+        #     Stays visible under reduced motion as a static lit window.
+        self._paint_status_ring(p, cx, cy, r, t, m, acc, blend)
+
         # 6. Sweeping arcs. Long spans, not dashes — the original's grandeur
         #    came from a few big strokes. Speed is the state: idle drifts,
         #    working hurries, speaking runs.
         rate = 1.0 + (1.9 if self.state in WORKING_STATES else 0.0) \
                    + (1.2 if self.speaking else 0.0)
+        if m is not None:
+            rate = m.ring_rate + (1.2 if self.speaking else 0.0)
+        if self._reduced_motion:
+            rate *= 0.12
         for k, (rr, span, count, dirn, col, a, wid) in enumerate((
                 (0.955, 118, 2, +1, acc,  0.75, 2.0),
                 (0.845, 82,  3, -1, main, 0.38, 1.3),
@@ -805,6 +1020,10 @@ class HudCanvas(QWidget):
             for sgm in range(count):
                 p.drawArc(box, int((base + sgm * (360.0 / count)) * 16),
                           int(span * 16))
+
+        # 6b. Neural sphere — nodes, edges, travelling signals. Sits under
+        #     the voice ring so the audio layer keeps the foreground.
+        self._paint_neural(p, cx, cy, r, t, m, main, acc, blend)
 
         # 7. The voice, as a ring of graduations that grow with it. Kept out at
         #    a wide radius so it never crowds the middle.
@@ -842,6 +1061,10 @@ class HudCanvas(QWidget):
             p.setPen(QPen(blend(qcol(C.WHITE), 0.6 + 0.4 * min(1.0, amp * 2)), 1))
             p.drawText(QRectF(cx - r, cy - fsz, r * 2, fsz * 2),
                        Qt.AlignmentFlag.AlignCenter, name)
+
+        # 10. Particles above the name ring, plus the VERIFYING scan arc.
+        self._paint_particles(p, cx, cy, r, t, m, main, blend)
+        self._paint_scan(p, cx, cy, r, t, acc, blend)
 
     def paintEvent(self, _):
         p = QPainter(self)
