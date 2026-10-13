@@ -9,9 +9,10 @@ Design rules (Phase 2 / Phase 5 of the V3 spec):
 
 * **Honest states only.** A state may be set only from a real runtime event —
   a transcript arriving, a tool running, a verification starting, an error
-  being reported. Never a timer, never decoration. ``PLANNING`` and
-  ``OBSERVING`` exist in the vocabulary but have no emitter yet; they light up
-  only when the planner (M4) and the observer (M8) are actually wired.
+  being reported. Never a timer, never decoration. ``PLANNING`` lights while
+  a real plan producer works (dev_agent's planner model, the automation
+  generator); ``OBSERVING`` while a captured screen/camera frame waits for
+  the model to see it (``screen_process`` → ``_flush_pending_vision``).
 * **The vocabulary is fixed.** 13 V3 states + 2 system states
   (``MUTED``, ``INITIALISING``). Anything else arriving is passed through
   unchanged so no existing caller can break, but it is flagged for tests.

@@ -46,7 +46,7 @@ def _fmt_runs(runs: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def automation_action(parameters: dict) -> str:
+def automation_action(parameters: dict, player=None) -> str:
     eng = _engine_or_none()
     if eng is None:
         return ("Automation engine is not available in this session — "
@@ -148,7 +148,17 @@ def automation_action(parameters: dict) -> str:
             text = str(parameters.get("text") or "").strip()
             if not text:
                 raise ValueError("generate needs text=<your request>")
-            res = generate(text, eng.catalog, _ai_json, ledger=eng.ledger)
+            # Designing the graph is real planning — the planner model runs
+            # inside generate() until a valid workflow comes out. Muted HUDs
+            # stay untouched; main's dispatch end resets to LISTENING anyway.
+            _muted = getattr(player, "muted", True)
+            if player is not None and not _muted:
+                player.set_state("PLANNING")
+            try:
+                res = generate(text, eng.catalog, _ai_json, ledger=eng.ledger)
+            finally:
+                if player is not None and not _muted:
+                    player.set_state("EXECUTING")
             if res.status == REQUIRES_CLARIFICATION:
                 return ("NEEDS CLARIFICATION — ask the user, do not "
                         "guess:\n" + res.clarification)

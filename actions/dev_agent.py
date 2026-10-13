@@ -40,6 +40,21 @@ def _get_model(model_name: str = gemini.SMART):
     return _W()
 
 
+def _set_state(player, state: str) -> None:
+    """Emit a V3 state through the UI facade — muted HUDs stay untouched.
+
+    ``PLANNING`` lights while this file's planner model is actually working
+    (project plan, fix plan); ``EXECUTING`` while files are written or a run
+    is retried. The dispatch end in main resets to LISTENING, so a failed
+    step can never strand the HUD on a state that stopped being true.
+    """
+    try:
+        if player is not None and not getattr(player, "muted", False):
+            player.set_state(state)
+    except Exception:
+        pass
+
+
 def _strip_fences(text: str) -> str:
     text = text.strip()
     text = re.sub(r"^```[a-zA-Z]*\r?\n?", "", text)
@@ -454,6 +469,7 @@ def _build_project(
             player.write_log(f"[DevAgent] {msg}")
 
     log("Planning project structure...")
+    _set_state(player, "PLANNING")
     try:
         plan = _plan_project(description, language)
     except RateLimitError:
@@ -465,6 +481,7 @@ def _build_project(
         if speak: speak(msg)
         return msg
 
+    _set_state(player, "EXECUTING")
     proj_name    = project_name or plan.get("project_name", "jarvis_project")
     proj_name    = re.sub(r"[^\w\-]", "_", proj_name)
     project_dir  = PROJECTS_DIR / proj_name
@@ -554,6 +571,7 @@ def _build_project(
                 continue
 
         log(f"Fixing errors (type: {error_type})...")
+        _set_state(player, "PLANNING")
         try:
             updated = _fix_files(
                 error_output=last_output,
@@ -572,6 +590,8 @@ def _build_project(
             return msg
         except Exception as e:
             log(f"Fix step failed: {e}")
+        finally:
+            _set_state(player, "EXECUTING")
 
     msg = (
         f"I couldn't fully fix '{proj_name}' after {MAX_FIX_ATTEMPTS} attempts, sir. "

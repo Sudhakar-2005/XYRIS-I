@@ -95,6 +95,7 @@ from core.event_bus            import EventBus, Event, EventType, Priority
 from core.permissions          import PermissionLedger
 from core.gates                import evaluate_gates, message_for
 from core.activity             import ActivityFeed
+from core.session_memory       import SessionMemory
 from core.degraded             import EndpointDetector, OfflineVoice
 from core.verifier import (
     Verifier, VerificationRule, VerificationStrategy,
@@ -730,6 +731,9 @@ class JarvisLive:
         self._phone_active        = False   # True while phone mic is streaming; pauses PC mic
         self._pending_vision       = None    # (img_bytes, mime_type, question, angle) to inject after tool response
         self._memory_notes: list[str] = []  # memory writes pending injection into the live context
+        # Session-lifetime handoff slot for tools (weather's last search, …).
+        # Was always None before — Phase 2 residual made it a real object.
+        self.session_memory      = SessionMemory()
         self._vision_cam_active    = False   # True if camera was opened for vision → auto-close after response
         self._vision_close_pending = False   # True after vision injected; next turn_complete closes camera
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
@@ -1727,6 +1731,10 @@ class JarvisLive:
                         print(f"[Vision] 🖥️  Screen: {len(img_b):,} bytes")
                         _stall = "screen"
                     self._pending_vision = (img_b, mime_t, user_text, angle)
+                    # The frame is real and in hand — OBSERVING is the honest
+                    # word for "a captured view is waiting to be analysed".
+                    if not self.ui.muted:
+                        self.ui.set_state("OBSERVING")
                     # The image is attached to this same exchange, so there is
                     # nothing to stall for and nothing to announce. Asking for an
                     # acknowledgement here is what produced two spoken answers —
@@ -1783,7 +1791,7 @@ class JarvisLive:
                 if name == "file_processor" and not args.get("file_path") and self.ui.current_file:
                     args["file_path"] = self.ui.current_file
                 _ctx = {"player": self.ui, "speak": self.speak,
-                        "response": None, "session_memory": None}
+                        "response": None, "session_memory": self._session_mem()}
                 # The policy's timeout: a hung handler must not hold the
                 # conversation hostage. The worker thread itself cannot be
                 # killed and will finish (or fail) on its own — the model
@@ -1804,7 +1812,8 @@ class JarvisLive:
                         loop.run_in_executor(
                             None,
                             lambda: self._plugin_registry.run(
-                                name, args, player=self.ui, session_memory=None)),
+                                name, args, player=self.ui,
+                                session_memory=self._session_mem())),
                         timeout=policy.timeout)
                     result = r or "Done."
                     self._surface_content(name, args, r)
@@ -1842,7 +1851,16 @@ class JarvisLive:
         )
 
         if not self.ui.muted:
-            self.ui.set_state("LISTENING")
+            # A captured frame queued for the model is an observation still in
+            # flight — show it until the flush hands it over; otherwise back to
+            # LISTENING. getattr: test doubles built via __new__ carry neither
+            # attribute, and the (no-session) case could never flush the frame
+            # — it must not stick on OBSERVING forever.
+            self.ui.set_state(
+                "OBSERVING"
+                if (getattr(self, "_pending_vision", None)
+                    and getattr(self, "session", None))
+                else "LISTENING")
 
         print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
 
@@ -2092,6 +2110,22 @@ class JarvisLive:
         except Exception as e:
             print(f"[JARVIS] ❌ Mic: {e}")
             raise
+
+    def _session_mem(self):
+        """The session-lifetime handoff slot, created on first dispatch.
+
+        Lazily: test doubles built via ``__new__`` skip ``__init__`` and must
+        still dispatch without AttributeError (the slot simply didn't exist
+        for them before it was wired).
+        """
+        sm = getattr(self, "session_memory", None)
+        if sm is None:
+            sm = SessionMemory()
+            try:
+                self.session_memory = sm
+            except Exception:
+                pass
+        return sm
 
     async def _flush_pending_vision(self) -> bool:
         """Send a captured frame immediately after its tool response.
