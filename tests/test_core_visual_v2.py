@@ -107,6 +107,76 @@ class TestSphereDepthV2(unittest.TestCase):
                             rviz.node_positions(1.5, 10.0, reduced=True))
 
 
+class TestPointerParallax(unittest.TestCase):
+    """V2 Layer E: bounded pointer parallax — target from real mouse events,
+    eased in _step, zeroed on leave and under reduced motion."""
+
+    @classmethod
+    def setUpClass(cls):
+        from PyQt6.QtWidgets import QApplication
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        import ui
+        self.hud = ui.HudCanvas("", "PAR")
+        self.hud.resize(400, 300)
+        self.addCleanup(lambda: self.hud.close())
+
+    def _move(self, x, y):
+        self._move2(self.hud, x, y)
+
+    def test_tracking_on_and_target_normalised(self):
+        self.assertTrue(self.hud.hasMouseTracking())
+        self._move(0.0, 0.0)                       # top-left → (-1, -1)
+        self.assertAlmostEqual(self.hud._par_tgt.x(), -1.0)
+        self.assertAlmostEqual(self.hud._par_tgt.y(), -1.0)
+        self.assertTrue(self.hud._par_on)
+        self._move(400.0, 300.0)                   # bottom-right → (1, 1)
+        self.assertAlmostEqual(self.hud._par_tgt.x(), 1.0)
+        self.assertAlmostEqual(self.hud._par_tgt.y(), 1.0)
+
+    def test_step_eases_toward_target(self):
+        self._move(400.0, 0.0)
+        for _ in range(80):
+            self.hud._step()
+        self.assertAlmostEqual(self.hud._par.x(), 1.0, places=2)
+        self.assertAlmostEqual(self.hud._par.y(), -1.0, places=2)
+
+    def test_leave_returns_to_centre_and_reduced_blocks(self):
+        from PyQt6.QtCore import QEvent
+        import ui
+        self._move(400.0, 0.0)
+        self.hud.leaveEvent(QEvent(QEvent.Type.Leave))
+        self.assertEqual((self.hud._par_tgt.x(), self.hud._par_tgt.y()),
+                         (0.0, 0.0), "leave must re-centre the target")
+        for _ in range(80):
+            self.hud._step()
+        self.assertAlmostEqual(self.hud._par.x(), 0.0, places=3)
+
+        hud2 = ui.HudCanvas("", "PAR2")
+        try:
+            hud2._reduced_motion = True
+            self._move2(hud2, 400.0, 0.0)
+            self.assertFalse(hud2._par_on, "reduced motion ignores the pointer")
+            self.assertEqual(hud2._par_tgt.x(), 0.0)
+        finally:
+            hud2.close()
+
+    def _move2(self, hud, x, y):
+        from PyQt6.QtCore import QPointF, QEvent, Qt
+        try:
+            from PyQt6.QtGui import QMouseEvent
+            e = QMouseEvent(QEvent.Type.MouseMove, QPointF(x, y),
+                            Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier)
+        except Exception:                       # pragma: no cover
+            class _E:
+                def position(self):
+                    return QPointF(x, y)
+            e = _E()
+        hud.mouseMoveEvent(e)
+
+
 class TestV2ReactorPaint(unittest.TestCase):
 
     @classmethod

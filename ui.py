@@ -435,6 +435,15 @@ class HudCanvas(QWidget):
         # frame (logged once — see paintEvent).
         self._core_paint_failed = False
 
+        # V2 Layer E: optional pointer parallax — the sphere drifts up to
+        # 4 px against the pointer (particles 6 px), eased in _step, zeroed
+        # on pointer-leave and under reduced motion. Never physics, never
+        # unbounded.
+        self._par    = QPointF(0.0, 0.0)
+        self._par_tgt = QPointF(0.0, 0.0)
+        self._par_on = False
+        self.setMouseTracking(True)
+
         self._tick       = 0
         self._scale      = 1.0
         self._tgt_scale  = 1.0
@@ -614,6 +623,35 @@ class HudCanvas(QWidget):
         if lv > self._live_amp:
             self._live_amp = lv
 
+    # ── pointer parallax (V2 Layer E — optional, bounded, reversible) ────────
+
+    def mouseMoveEvent(self, e) -> None:
+        """Record a normalised pointer target (-1..1); _step() eases toward
+        it. Ignored entirely under reduced motion."""
+        if not self._reduced_motion:
+            try:
+                pos = e.position()
+                W = max(1, self.width())
+                H = max(1, self.height())
+                tx = max(-1.0, min(1.0, (pos.x() / W - 0.5) * 2.0))
+                ty = max(-1.0, min(1.0, (pos.y() / H - 0.5) * 2.0))
+                self._par_tgt = QPointF(tx, ty)
+                self._par_on = True
+            except Exception:
+                pass
+        try:                        # a pointer event must never crash input
+            super().mouseMoveEvent(e)
+        except Exception:
+            pass
+
+    def leaveEvent(self, e) -> None:
+        """Pointer left the canvas: ease the parallax back to centre."""
+        self._par_tgt = QPointF(0.0, 0.0)
+        try:
+            super().leaveEvent(e)
+        except Exception:
+            pass
+
     def _make_grid(self, W: int, H: int) -> QPixmap:
         """Pre-render the static grid-dot background into a transparent pixmap so
         paintEvent can blit it once per frame instead of running a nested
@@ -631,6 +669,21 @@ class HudCanvas(QWidget):
     def _step(self):
         self._tick += 1
         now = time.time()
+
+        # ── Pointer parallax easing (V2 Layer E) ─────────────────────────────
+        # One small lerp toward the target per tick; reduced motion pins the
+        # layers at centre. Nothing here ever computes forces or collisions.
+        if self._reduced_motion:
+            if self._par_on:
+                self._par = QPointF(0.0, 0.0)
+                self._par_tgt = QPointF(0.0, 0.0)
+                self._par_on = False
+        elif self._par_on:
+            tx, ty = self._par_tgt.x(), self._par_tgt.y()
+            nx = self._par.x() + (tx - self._par.x()) * 0.15
+            ny = self._par.y() + (ty - self._par.y()) * 0.15
+            self._par = QPointF(tx, ty) if (
+                abs(nx - tx) < 1e-4 and abs(ny - ty) < 1e-4) else QPointF(nx, ny)
 
         # ── Live audio reactivity ────────────────────────────────────────────
         # A viseme schedule, if one is playing, gives both the level and the
@@ -857,8 +910,14 @@ class HudCanvas(QWidget):
         act = max(act, boost * 0.5)
 
         # edges — depth gradient + a slow pathway shimmer (V2 Layer B),
-        # both clamped by blend(); reduced motion keeps them steady.
-        pts = [(cx + nx * disc, cy + ny * disc, d)
+        # both clamped by blend(); reduced motion keeps them steady. The
+        # sphere layer takes the pointer parallax (≤4 px) against the fixed
+        # rings, which is what sells the depth separation.
+        pox = poy = 0.0
+        if self._par_on and not self._reduced_motion:
+            pox = self._par.x() * 4.0
+            poy = self._par.y() * 4.0
+        pts = [(cx + nx * disc + pox, cy + ny * disc + poy, d)
                for nx, ny, d, _ in nodes]
         p.setPen(Qt.PenStyle.NoPen)
         for i, j in _rviz.EDGES:
@@ -892,17 +951,22 @@ class HudCanvas(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
 
     def _paint_particles(self, p, cx, cy, r, t, m, main, blend):
-        """Layer D: bounded orbiting particles (budget from state profile)."""
+        """Layer E: bounded orbiting particles (budget from state profile),
+        carrying the larger half of the pointer parallax (≤6 px)."""
         if _rviz is None or self._reduced_motion or not self._particles:
             return
         disc = r * 0.82
         spin = (m.spin if m else 0.1) * t
+        pox = poy = 0.0
+        if self._par_on:
+            pox = self._par.x() * 6.0
+            poy = self._par.y() * 6.0
         for part in self._particles:
             sx, sy, d = _rviz.project_particle(part, spin)
             a = _rviz.particle_alpha(part, t) * (0.35 + d * 0.65)
             p.setPen(QPen(blend(main, min(0.6, a)), 1))
             p.setBrush(QBrush(blend(main, min(0.5, a))))
-            px, py = cx + sx * disc, cy + sy * disc
+            px, py = cx + sx * disc + pox, cy + sy * disc + poy
             p.drawEllipse(QPointF(px, py), 1.0 + d, 1.0 + d)
         p.setBrush(Qt.BrushStyle.NoBrush)
 
