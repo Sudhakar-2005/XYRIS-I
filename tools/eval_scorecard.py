@@ -4,8 +4,15 @@
 
 Runs the mapped test groups (offscreen Qt), folds in live data where it
 exists (session transcripts, RungStats), and writes docs/brain/EVAL_SCORECARD.md.
-Metrics without a labeled dataset are reported honestly as NEEDS-DATA with
-the dataset the EVALUATION_PLAN calls for — never a fabricated number.
+
+Measured-metric subtools (outputs read from tests/eval/datasets/, local):
+    tools/eval_m1_recall.py     M1 Recall@5 on real transcript pairs
+    tools/eval_m2_m4_packets.py M2 label packet + M4 A/B preference packet
+    tools/eval_m5_matrix.py     M5 per-strategy confusion matrix (fixtures)
+
+Metrics awaiting a human step report NEEDS-HUMAN (labels/preferences are
+ground truth by design); metrics with no dataset yet report NEEDS-DATA —
+never a fabricated number.
 """
 from __future__ import annotations
 
@@ -45,16 +52,17 @@ GROUPS: dict[str, tuple[str, list[str]]] = {
 }
 
 NOTES = {
-    "M1": "Relevance (Recall@5) needs the labeled query set — the anonymized "
-          "export (tests/eval/datasets/, regenerated locally) carries the raw "
-          "turns; pairs still need labeling (human/derived step).",
+    "M1": "Relevance (Recall@5) needs the labeled query set — run "
+          "tools/eval_m1_recall.py to materialize it from local transcripts.",
     "M2": "Routing accuracy needs ground-truth labels (user's next accepted "
-          "action) — raw turns exported, labels are a separate human step.",
+          "action) — run tools/eval_m2_m4_packets.py to export the 200-turn "
+          "double-label packet; scoring is a human step by design.",
     "M3": "Planner deleted in Phase 4 (M3 waiver: chaining + workflow "
           "generator are the only plan producers); generator/validate score.",
-    "M4": "Token-overhead labels not yet built — NEEDS-DATA.",
-    "M5": "Verifier contract + wiring score; per-strategy confusion matrix "
-          "needs labeled tool outcomes — NEEDS-DATA.",
+    "M4": "Token overhead measured by m4_overhead(); the reviewer-preference "
+          "A/B half needs the exported packet (tools/eval_m2_m4_packets.py).",
+    "M5": "Verifier contract + wiring score; run tools/eval_m5_matrix.py for "
+          "the per-strategy confusion matrix over executed fixtures.",
     "M6": "Reconnect/degraded ladder tests; production recovery rate needs "
           "event-bus traces — contract score shown.",
     "M7": "Ladder contract score; live provider mix from the RungStats dump "
@@ -62,6 +70,17 @@ NOTES = {
     "M8": "Full automation suite score (runtime/actions/adapters).",
     "M9": "Startup + perf gate pass/fail with measured durations.",
 }
+
+
+def _eval_json(name: str) -> dict:
+    p = ROOT / "tests" / "eval" / "datasets" / name
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
 
 
 def run_group(files: list[str]) -> tuple[int, int, str]:
@@ -139,20 +158,62 @@ def export_info() -> dict:
 def main() -> int:
     rows, total_p, total_f = [], 0, 0
     m4 = m4_overhead()
+    m1 = _eval_json("m1_recall.json")
+    m5 = _eval_json("m5_matrix.json")
+    packets = _eval_json("PACKET_INFO.json")
     for mid, (label, files) in GROUPS.items():
         passed, failed, dur = run_group(files)
         total_p += passed
         total_f += failed
         note = NOTES[mid]
-        if mid == "M4" and m4:
+        if mid == "M1" and m1:
+            status = "MEASURED"
+            v2 = m1.get("memory_v2_recall5")
+            score = (f"Recall@5: lexical {m1['lexical_recall5']}% vs "
+                     f"memory_v2 "
+                     f"{v2 if v2 is not None else 'skipped'}% "
+                     f"(delta {m1.get('delta_points')} pts) on "
+                     f"{m1['n_pairs']} real transcript pairs")
+            note = (f"REAL search_memory vs REAL MemoryRetriever; decision: "
+                    f"{m1.get('decision')} (+ contract tests {passed} "
+                    f"passed, {dur})")
+        elif mid == "M2" and packets.get("m2", {}).get("turns"):
+            status = "NEEDS-HUMAN"
+            n = packets["m2"]["turns"]
+            score = f"contract tests {passed} passed ({dur}); {n}-turn double-label packet ready"
+            note = ("labels are ground truth by design (plan: human intent) "
+                    "— packet at tests/eval/datasets/m2_labels.csv "
+                    "(local, gitignored); model-tool-choice baseline needs a "
+                    "live replay after labels exist")
+        elif mid == "M4" and m4:
             status = "MEASURED"
             score = (f"{m4['overhead_pct']}% of prompt "
                      f"({m4['injected_chars']}/{m4['prompt_chars']} chars)")
+            pref = ""
+            if packets.get("m4", {}).get("pairs"):
+                pref = (f"; A/B reviewer packet ready: {packets['m4']['pairs']} "
+                        f"pairs at tests/eval/datasets/m4_ab_packet.md")
             note = ("Core-block token overhead measured on this box (real "
                     "memory + core/prompt.txt, char-exact); injection "
-                    "contract covered by the Phase 3 memory tests. The "
-                    "plan's reviewer-preference A/B half still needs human "
-                    "labels — NEEDS-DATA.")
+                    "contract covered by the Phase 3 memory tests"
+                    + pref + ".")
+        elif mid == "M5" and m5:
+            status = "MEASURED"
+            score = (f"false-pass {m5['aggregate_false_pass_pct']}%, "
+                     f"false-fail {m5['aggregate_false_fail_pct']}% "
+                     f"over {m5['method'].split('(')[1].split(')')[0]}; "
+                     f"stub passes {m5['stub_pass_count']} (must be 0)")
+            ok = m5.get("per_strategy_false_fail_ok", {})
+            fail = [k for k, v in ok.items() if not v]
+            note = (f"executed-fixture matrix via tools/eval_m5_matrix.py; "
+                    f"ship rule (false-fail<=5%): "
+                    f"{'ALL real strategies pass' if not fail else 'FAILING: ' + ', '.join(fail)}"
+                    f"; wiring tests {passed} passed ({dur})")
+        elif mid == "M4":
+            status = "NEEDS-DATA" if not m4 else "MEASURED"
+            score = "—" if not m4 else (
+                f"{m4['overhead_pct']}% "
+                f"({m4['injected_chars']}/{m4['prompt_chars']} chars)")
         elif not files:
             status = "NEEDS-DATA"
             score = "—"

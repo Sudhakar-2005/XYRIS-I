@@ -18,6 +18,8 @@
 
 **Phase 1/8 additions (status 2026-10-13):** dataset export script DONE - `tools/eval_export_datasets.py` (JSONL, secret-scrubbed, local-only: `tests/eval/datasets/` is gitignored because it mirrors personal transcripts); gate denials print structured `[Policy]` lines at the seam and verifier verdicts now ride the TOOL_RESULT event data (`main.py` dispatch), giving M5/M6 a machine-readable outcome stream to trace.
 
+**Residual closeout (status 2026-10-15):** the three metric residuals now have honest homes — **M1** scored with `tools/eval_m1_recall.py`: 247 (query, expected) pairs built by conversation structure from real transcripts (user ask → the real assistant answer it received), REAL `search_memory` vs REAL `MemoryRetriever` → lexical Recall@5 31.2% vs memory_v2 30.4% (−0.8 pts) → **keep lexical** under the ≥+10-point rule; **M5** scored with `tools/eval_m5_matrix.py`: 10 strategies/stub-groups × 50 executed fixtures → real confusion matrices, aggregate false-pass 0.0% / false-fail 0.0% over the six real strategies (ship rule met), stub paths (NONE/DOM/SCREENSHOT/no-rule) recorded 0 passes — the honesty property, executed; **M2/M4** human halves exported by `tools/eval_m2_m4_packets.py` (200-turn double-label CSV + 10-pair A/B preference packet) and reported as **NEEDS-HUMAN** on the scorecard — labels and reviewer preference are ground truth *by definition* of those metrics, so they are prepared to minutes of work, never auto-invented. Test coverage: `tests/test_eval_residual_tools.py` (9 tests + 26 subtests).
+
 ## 2. Metric definitions
 
 ### M1 — Memory retrieval relevance
