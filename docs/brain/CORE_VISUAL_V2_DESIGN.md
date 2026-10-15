@@ -166,32 +166,106 @@ motion, pointer-parallax gating, paint-timer smoke, plus full regression run
 
 ---
 
-## Definition of Done (spec §17) — status filled in Phase 9
+## Definition of Done (spec §17) — Phase 9 verification (2026-10-15)
 
-- [ ] Core matches the neural-reactor direction
-- [ ] Branding intact (name ring, palette, typography)
-- [ ] Reactor visually prominent (single focal centre)
-- [ ] Nodes/pathways render correctly (deterministic, tested)
-- [ ] Rings have distinct motion profiles (tested invariant)
-- [ ] Particles within resource limits (≤28, tested)
-- [ ] Real application states drive the visualization (15-state table, tested)
-- [ ] Automation events represented accurately (kind inventory, no invented kinds)
-- [ ] Success only after required verification (verifier-gated completion)
-- [ ] Errors/confirmations clearly represented (glyph + accent + ring)
-- [ ] Reduced-motion mode works (tested)
-- [ ] Renderer failure does not crash AETHER-I (paint fallback, tested)
-- [ ] Performance measured (paint-timer data recorded here, not claimed)
-- [ ] Existing functionality operational (full suite green)
-- [ ] Relevant tests pass
-- [ ] Limitations documented (below)
+- [x] Core matches the neural-reactor direction — all six layers A–F built
+      (shells/tech-markings/reactor heart, perspective sphere, profile ring
+      set, event-driven signals + automation band, bounded parallax
+      particles, HUD)
+- [x] Branding intact — name ring, `Courier` status typography, palette
+      class `C` untouched; the face centrepiece path unchanged
+- [x] Reactor visually prominent — single focal centre, paint order keeps it
+      the first-read element
+- [x] Nodes/pathways render correctly — deterministic `node_positions`
+      (bounds/determinism/drift tests), smoke across all states
+- [x] Rings have distinct motion profiles — `RING_PROFILES` invariant
+      (no two rings share rate+direction) tested
+- [x] Particles within resource limits — `MAX_PARTICLES=28` hard cap +
+      per-state budgets (V1 tests, still green)
+- [x] Real application states drive the visualization — all 15
+      `app_state.VALID_STATES` paint-tested; motion/accent/pulse maps
+      complete; unknown → calm default
+- [x] Automation events represented accurately — backend kind inventory ⊆
+      `AUTO_KINDS` tested; unknown kinds never paint; labels present for
+      every kind; dedup/close/late-event rules tested
+- [x] Success appears only after required verification — `AUTO_DONE` is
+      `{run_completed}` only, and the adapter refuses `run_completed` when a
+      required verifier failed (Phase 5/6 record); dry-run/cancel are
+      neutral "clear", never success-coloured
+- [x] Errors and confirmations clearly represented — ERROR: static red
+      ring + `✕` glyph, no flashing; WAITING_CONFIRMATION: amber + `!`
+      steady glyph + banner with the real pending action
+- [x] Reduced-motion mode works — rates ×0.12, particles drained, drift
+      frozen, parallax pinned, signals off, static band/ring windows
+      (tested each)
+- [x] Renderer failure does not crash AETHER-I — fail-soft boundary +
+      sticky simple-orb fallback, one logged error, tested with a synthetic
+      paint exception (`test_paint_failure_falls_back_and_sticks`)
+- [x] Performance has been measured — `tools/hud_paint_bench.py` numbers
+      below + env-gated `AETHER_HUD_PAINT=1` frame timer in the live app;
+      no frame rate is claimed, only measured cost vs the 16.67 ms budget
+- [x] Existing functionality operational — full regression **1413 passed,
+      0 failed** (baseline before V2: 1383)
+- [x] Relevant tests pass — core-visual suites: 17 V1 + 30 V2 = 47 green
+- [x] Limitations documented — below
 
-## Limitations (honest record, updated in Phase 9)
+## Measured performance (Phase 8 record — real numbers, this machine)
 
-- Software rasterisation: no true 3D geometry, no real lighting/bloom — depth
-  is perspective projection + shading cues (spec §5's Canvas-class option).
-- PAUSED/COMPLETED are automation-run-level indicators, not global app states
-  (the global vocabulary has no such states, by design).
-- Automation node advancement shows only what the payload carries; no
-  fabricated percentage; validation events do not exist in the backend and
+`python tools/hud_paint_bench.py` (offscreen `QWidget.render`, software
+QPainter, warm caches, 200 frames/scenario). App-realistic canvas size
+490×470:
+
+| Scenario | avg ms | p50 | p95 | max | vs 16.67 ms budget |
+|---|---|---|---|---|---|
+| IDLE | 5.97 | 5.20 | 10.02 | 33.31 | avg/p95 within |
+| IDLE reduced-motion | 5.43 | 5.06 | 7.99 | 14.86 | within |
+| EXECUTING | 12.99 | 12.52 | 20.14 | 27.11 | avg within, **p95 over** |
+| EXECUTING reduced | 10.85 | 10.14 | 17.10 | 27.53 | avg within, p95 marginal |
+| VERIFYING | 13.29 | 12.75 | 21.77 | 63.64 | avg within, **p95 over** |
+| VERIFYING reduced | 12.82 | 13.09 | 19.00 | 23.10 | avg within, **p95 over** |
+
+Read honestly: **averages stay inside the 60 Hz budget in every
+scenario; the tail (p95) exceeds it in the heavy states**, i.e. occasional
+over-budget frames (skipped vsync) while working — on this software raster
+path, with run-to-run variance (640×420 run measured EXECUTING avg 9.84 ms;
+900×560 runs ranged 5.97–13.45 ms depending on system load). Live
+measurement: launch with `AETHER_HUD_PAINT=1` and watch
+`aether.hud` log lines (`hud paint measured: avg … over 240 frames
+(60 Hz budget = 16.67 ms)`) — that is the only source an FPS claim may
+ever cite. Optimization candidates if the tail matters: cache the
+atmosphere/shell gradients per quantised lift bucket, pre-bake static
+graduations per (size, colour).
+
+## Phase 9 record
+
+| Phase | Commit |
+|---|---|
+| 0+1 audit/design | `aff9299` (baseline `fffca19`) |
+| 2 reactor + ring set + fail-soft | `9267115` |
+| 3 sphere perspective/drift/shimmer | `d6f190b` |
+| 4 pointer parallax | `10f7a41` |
+| 5+6 automation seam + band | `05aba97` |
+| 7+8 audio tests + paint timer + bench | `8efeb5e` |
+| 9 this document + final regression | (this commit) |
+
+Regression after every phase; final: **1413 passed, 0 failed** (V1 suites
+untouched and green — no existing behaviour removed).
+
+## Limitations (honest record, Phase 9)
+
+- Software rasterisation: perspective projection + shading cues, not true
+  3D geometry, lighting or GPU bloom (spec §5's Canvas-class option).
+- PAUSED/COMPLETED exist only as the automation band's `PAUSED` hold and
+  `DONE` flash — the global vocabulary has no such states by design; the
+  band never hijacks global state.
+- No percentages anywhere: node payloads carry no totals, so the band shows
+  activity/labels only. Validation events do not exist in the backend and
   are therefore not drawn.
-- No frame-rate claim until measured with `AETHER_HUD_PAINT=1`.
+- Band freshness: persistent classes expire after 300 s without run events;
+  terminal flashes expire on their TTL; late events after a terminal are
+  ignored (terminal-wins); no automation traffic ⇒ no band (honest default).
+- Performance: averages within budget, p95 tail over budget in heavy states
+  on this machine (measured table above); no FPS claim is made.
+- Optional features degrade silently: no pointer moves ⇒ no parallax; no
+  automation events ⇒ no band; no audio ⇒ state-driven animation only.
+
