@@ -155,6 +155,41 @@ def project_nodes(ang: float) -> tuple[tuple[float, float, float, int], ...]:
     return tuple(out)
 
 
+# Per-node micro-motion (V2 Layer B): deterministic constants derived from
+# the node index — no RNG at import, identical across launches. Amplitudes
+# stay tiny so the lattice never visibly comes apart.
+DRIFT: tuple[tuple[float, float, float], ...] = tuple(
+    (0.5 + (i * 0.37) % 1.7,          # angular frequency, rad/s
+     (i * 1.13) % math.tau,           # phase offset
+     0.010 + 0.006 * (i % 3))         # amplitude in unit-sphere space
+    for i in range(NODE_COUNT))
+
+
+def perspective_scale(depth: float) -> float:
+    """Mild forward perspective for the neural sphere: near nodes render
+    slightly larger/outward, far ones smaller/inward. A depth cue inside a
+    2D painter — not a claim of true 3D geometry (V2 design, spec §5)."""
+    return 0.82 + 0.40 * max(0.0, min(1.0, depth))
+
+
+def node_positions(ang: float, t: float,
+                   reduced: bool = False) -> tuple[tuple[float, float, float, int], ...]:
+    """Rotated + micro-drifted + perspective-scaled node screen positions.
+
+    Deterministic in (ang, t). ``reduced=True`` freezes the drift (rotation
+    still follows *ang* — the caller zeroes that too). Bounds: |sx|,|sy| ≤ 1.35.
+    """
+    out = []
+    for i, (x, y, d, tier) in enumerate(project_nodes(ang)):
+        if not reduced:
+            freq, ph, amp = DRIFT[i]
+            x += amp * math.sin(t * freq + ph)
+            y += amp * 0.7 * math.cos(t * freq * 0.83 + ph * 1.7)
+        s = perspective_scale(d)
+        out.append((x * s, y * s, d, tier))
+    return tuple(out)
+
+
 def signal_positions(t: float, speed: float,
                      count: int = SIGNAL_COUNT) -> tuple[tuple[int, float], ...]:
     """(edge_index, frac) for each travelling signal — frac in [0,1] is how

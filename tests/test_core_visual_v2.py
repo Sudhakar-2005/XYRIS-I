@@ -5,6 +5,7 @@ markings constants, reactor render smoke across the real state vocabulary,
 reduced-motion behaviour of the new layers, and the fail-soft paint
 boundary with its sticky simple-orb fallback (spec §14).
 """
+import math
 import time
 import unittest
 
@@ -57,6 +58,53 @@ class TestRingProfiles(unittest.TestCase):
         self.assertGreaterEqual(ct["count"], 8)
         self.assertLess(ct["radius_in"], ct["radius_out"])
         self.assertGreater(ct["alpha"], 0.0)
+
+
+class TestSphereDepthV2(unittest.TestCase):
+    """V2 Layer B: perspective, deterministic node drift, bounds."""
+
+    def test_perspective_scale_is_monotonic_and_clamped(self):
+        self.assertAlmostEqual(rviz.perspective_scale(0.0), 0.82)
+        self.assertAlmostEqual(rviz.perspective_scale(1.0), 1.22)
+        prev = -1.0
+        for i in range(11):
+            v = rviz.perspective_scale(i / 10)
+            self.assertGreaterEqual(v, prev, "monotonic in depth")
+            prev = v
+        self.assertAlmostEqual(rviz.perspective_scale(-3.0), 0.82,
+                               msg="far side clamps")
+        self.assertAlmostEqual(rviz.perspective_scale(9.0), 1.22,
+                               msg="near side clamps")
+
+    def test_drift_is_deterministic_bounded_and_indexed(self):
+        self.assertEqual(len(rviz.DRIFT), rviz.NODE_COUNT)
+        for freq, ph, amp in rviz.DRIFT:
+            self.assertGreater(freq, 0.0)
+            self.assertTrue(0.0 <= ph < math.tau)
+            self.assertLessEqual(amp, 0.03, "drift must stay micro")
+
+    def test_node_positions_deterministic_and_within_bounds(self):
+        a = rviz.node_positions(0.9, 3.3)
+        b = rviz.node_positions(0.9, 3.3)
+        self.assertEqual(a, b, "deterministic in (ang, t)")
+        for sx, sy, d, tier in a:
+            self.assertLessEqual(abs(sx), 1.35)
+            self.assertLessEqual(abs(sy), 1.35)
+            self.assertTrue(0.0 <= d <= 1.0)
+            self.assertIn(tier, (0, 1, 2))
+        c = rviz.node_positions(0.9, 7.7)
+        self.assertNotEqual(a, c, "micro-drift animates over time")
+        for sx, sy, d, tier in c:
+            self.assertLessEqual(abs(sx), 1.35)
+            self.assertLessEqual(abs(sy), 1.35)
+
+    def test_reduced_motion_freezes_drift(self):
+        still1 = rviz.node_positions(1.2, 10.0, reduced=True)
+        still2 = rviz.node_positions(1.2, 10.5, reduced=True)
+        self.assertEqual(still1, still2, "no drift under reduced motion")
+        # rotation still honoured through the ang argument
+        self.assertNotEqual(rviz.node_positions(0.0, 10.0, reduced=True),
+                            rviz.node_positions(1.5, 10.0, reduced=True))
 
 
 class TestV2ReactorPaint(unittest.TestCase):

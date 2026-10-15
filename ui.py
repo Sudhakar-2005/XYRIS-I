@@ -836,7 +836,12 @@ class HudCanvas(QWidget):
             return
         disc = r * 0.66
         spin = 0.0 if self._reduced_motion else (m.spin if m else 0.1) * t
-        nodes = _rviz.project_nodes(spin)
+        # V2 Layer B: perspective scale + deterministic micro-drift. Falls
+        # back to the raw projection if the pure module is the older one.
+        if hasattr(_rviz, "node_positions"):
+            nodes = _rviz.node_positions(spin, t, self._reduced_motion)
+        else:
+            nodes = _rviz.project_nodes(spin)
 
         # pulse boost: the strongest recent transition brightens the layer
         # (suppressed under reduced motion — no flashing, colour + label only)
@@ -851,7 +856,8 @@ class HudCanvas(QWidget):
         act = (m.signal_speed if m else 0.15) * (1.0 if not self._reduced_motion else 0.0)
         act = max(act, boost * 0.5)
 
-        # edges
+        # edges — depth gradient + a slow pathway shimmer (V2 Layer B),
+        # both clamped by blend(); reduced motion keeps them steady.
         pts = [(cx + nx * disc, cy + ny * disc, d)
                for nx, ny, d, _ in nodes]
         p.setPen(Qt.PenStyle.NoPen)
@@ -859,7 +865,9 @@ class HudCanvas(QWidget):
             xi, yi, di = pts[i]
             xj, yj, dj = pts[j]
             dep = (di + dj) * 0.5
-            a = 0.05 + dep * 0.13 + boost * 0.20
+            sh = 0.0 if self._reduced_motion else \
+                0.05 * math.sin(t * 1.7 + i * 0.61)
+            a = 0.04 + dep * 0.15 + sh + boost * 0.20
             p.setPen(QPen(blend(main, a), 1))
             p.drawLine(QLineF(xi, yi, xj, yj))
 
@@ -872,10 +880,11 @@ class HudCanvas(QWidget):
             p.setPen(QPen(blend(qcol(C.WHITE), 0.55 + boost * 0.4), 2))
             p.drawEllipse(QPointF(sx, sy), 1.6, 1.6)
 
-        # nodes — three brightness tiers, depth-parallaxed
+        # nodes — three brightness tiers, depth-parallaxed; the stronger d
+        # weighting gives the near hemisphere its edge over the far one.
         for (nx, ny, d, tier), (px, py, pd) in zip(nodes, pts):
             tw = (0.30 if tier == 0 else (0.18 if tier == 1 else 0.10))
-            a = tw + d * 0.45 + (0.25 if tier == 0 else 0.0) * (0.4 + boost)
+            a = tw + d * 0.50 + (0.25 if tier == 0 else 0.0) * (0.4 + boost)
             rad = 1.1 + d * 1.9 + (0.7 if tier == 0 else 0.0)
             p.setPen(QPen(blend(main, min(0.9, a)), 1))
             p.setBrush(QBrush(blend(qcol(C.WHITE), min(0.8, a * 0.9))))
