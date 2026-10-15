@@ -404,10 +404,15 @@ class TestSourceWiring(unittest.TestCase):
 
     def test_emit_filter_keeps_only_run_level_events(self):
         i = self.main_src.index("def _automation_emit")
-        body = self.main_src[i:i + 700]
+        # V2: the HUD's queued-signal forward sits BEFORE the run-only bus
+        # filter (the band consumes node kinds too), so the window grew —
+        # the filter itself must still be there, unchanged in behaviour.
+        # Behavioural coverage: test_core_visual_v2.py::TestAutomationSeam.
+        body = self.main_src[i:i + 1300]
         self.assertIn('kind.startswith("run_")', body)
         self.assertIn('"approval_waiting"', body)
         self.assertIn("correlation_id", body)
+        self.assertIn("emit_automation", body, "V2 HUD forward seam expected")
 
 
 class TestActivityLabels(unittest.TestCase):

@@ -177,6 +177,171 @@ class TestPointerParallax(unittest.TestCase):
         hud.mouseMoveEvent(e)
 
 
+class TestAutomationBand(unittest.TestCase):
+    """V2 Layer D: honest automation→band mapping (unknown/stale/expiry
+    rules), the canvas record method, and paint smoke with the band live."""
+
+    def test_unknown_kinds_never_paint(self):
+        self.assertIsNone(rviz.auto_band("invented_kind", 100.0, 100.0, 100.0))
+        self.assertIsNone(rviz.auto_band("", 100.0, 100.0, 100.0))
+        self.assertIsNone(rviz.auto_band(None, 100.0, 100.0, 100.0))
+
+    def test_backend_inventory_is_fully_covered(self):
+        backend = {"run_started", "run_paused", "run_resumed",
+                   "run_completed", "run_failed", "run_cancelled",
+                   "run_waiting_approval", "run_dry_run",
+                   "approval_waiting", "node_started", "node_retry",
+                   "node_finished"}
+        self.assertLessEqual(backend, set(rviz.AUTO_KINDS),
+                             "every backend kind must be paintable")
+        for k in rviz.AUTO_KINDS:
+            self.assertTrue(rviz.AUTO_LABELS.get(k), f"label missing: {k}")
+
+    def test_active_and_hold_persist_until_stale(self):
+        cls, a, label, frac = rviz.auto_band("run_started", 100.0, 100.0, 100.0)
+        self.assertEqual((cls, label), ("active", "RUN"))
+        self.assertEqual(frac, 0.0)
+        self.assertGreater(a, 0.0)
+        cls2, _, label2, _ = rviz.auto_band("run_paused", 100.0, 100.0, 100.0)
+        self.assertEqual((cls2, label2), ("hold", "PAUSED"))
+        late = 100.0 + rviz.AUTO_STALE_S + 1.0
+        self.assertIsNone(rviz.auto_band("run_started", late, 100.0, 100.0),
+                          "stale run band must disappear (honest default)")
+
+    def test_terminal_outcomes_flash_then_expire(self):
+        now, at = 50.0, 50.0
+        cls, a0, label, _ = rviz.auto_band("run_completed", now, now, at)
+        self.assertEqual((cls, label), ("done", "DONE"))
+        mid = rviz.auto_band("run_completed", now + 0.8, now, at)
+        self.assertLess(mid[1], a0, "completion flash decays")
+        ttl = rviz.AUTO_OUTCOME_TTL["run_completed"]
+        self.assertIsNone(rviz.auto_band("run_completed", now + ttl + 0.01,
+                                         now, at), "expired = no band")
+        s0 = rviz.auto_band("run_failed", now, now, at)
+        self.assertEqual(s0[0], "stop")
+        s1 = rviz.auto_band("run_failed", now + 3.0, now, at)
+        self.assertLess(s1[1], s0[1], "failure banner fades but lingers")
+        self.assertEqual(rviz.auto_band("run_dry_run", now, now, at)[0],
+                         "clear", "dry run is neutral, never success")
+        self.assertEqual(rviz.auto_band("run_cancelled", now, now, at)[0],
+                         "clear", "cancel is neutral, never success")
+
+    def test_no_progress_fields_exist_in_band_recipe(self):
+        # The band must never carry a percentage — assert the recipe shape
+        # has only (cls, alpha, label, age_frac) and alpha stays in [0, 1].
+        res = rviz.auto_band("node_finished", 10.0, 10.0, 10.0)
+        self.assertEqual(len(res), 4)
+        self.assertGreaterEqual(res[1], 0.0)
+        self.assertLessEqual(res[1], 1.0)
+
+
+class TestAutomationBandHud(unittest.TestCase):
+    """Canvas-side record method: dedup, close-on-terminal, paint smoke."""
+
+    @classmethod
+    def setUpClass(cls):
+        from PyQt6.QtWidgets import QApplication
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        import ui
+        self.hud = ui.HudCanvas("", "AUTO")
+        self.hud.hud_style = "core"
+        self.addCleanup(lambda: self.hud.close())
+
+    def test_unknown_ignored_and_known_recorded_deduped(self):
+        self.hud.on_automation_event("nonsense", {}, "r1")
+        self.assertEqual(self.hud._auto, {}, "unknown kind must be ignored")
+        self.hud.on_automation_event("run_started", {"x": 1}, "r1")
+        self.assertEqual(self.hud._auto["kind"], "run_started")
+        at0 = self.hud._auto["at"]
+        self.hud.on_automation_event("run_started", {}, "r1")   # <150 ms dup
+        self.assertEqual(self.hud._auto["at"], at0, "duplicate must dedupe")
+        self.hud.on_automation_event("node_finished", {"node": "n"}, "r1")
+        self.assertEqual(self.hud._auto["kind"], "node_finished")
+        self.assertGreater(self.hud._auto_pulse, 0.0,
+                           "node events pulse the band")
+
+    def test_terminal_wins_over_late_events_and_new_run_resets(self):
+        self.hud.on_automation_event("run_started", {}, "r9")
+        self.hud.on_automation_event("run_completed", {}, "r9")
+        self.assertTrue(self.hud._auto["close"])
+        self.hud.on_automation_event("node_finished", {}, "r9")   # out of order
+        self.assertEqual(self.hud._auto["kind"], "run_completed",
+                         "late node events must not resurrect a closed run")
+        self.hud.on_automation_event("run_started", {}, "r10")    # new run
+        self.assertEqual(self.hud._auto["kind"], "run_started")
+        self.assertFalse(self.hud._auto["close"], "new run starts open")
+
+    def test_band_paint_smoke_including_reduced_motion(self):
+        self.hud.on_automation_event("run_started", {}, "r1")
+        self.assertFalse(self.hud.grab().isNull())
+        self.hud.on_automation_event("run_failed", {}, "r1")
+        self.assertFalse(self.hud.grab().isNull())
+        self.hud._reduced_motion = True
+        self.assertFalse(self.hud.grab().isNull(),
+                         "reduced motion: static band window still paints")
+        self.hud.on_automation_event("run_completed", {}, "r2")
+        self.assertFalse(self.hud.grab().isNull())
+
+
+class TestAutomationSeam(unittest.TestCase):
+    """Phase 5/6 wiring: main forwards ALL kinds to the UI seam, the bus
+    keeps its run-only filter, JarvisUI rides the queued signal."""
+
+    def test_main_forwards_all_kinds_and_filters_bus(self):
+        import main as main_mod
+
+        class FakeUI:
+            def __init__(self):
+                self.calls = []
+
+            def emit_automation(self, kind, payload, run_id):
+                self.calls.append((kind, payload, run_id))
+
+        j = main_mod.JarvisLive.__new__(main_mod.JarvisLive)
+        j.ui = FakeUI()
+        bus = []
+        j.emit_event = lambda *a, **k: bus.append((a, k))
+
+        j._automation_emit("node_finished", {"node": "n"}, "run_1")
+        self.assertEqual(len(j.ui.calls), 1, "node kinds reach the HUD seam")
+        self.assertEqual(bus, [], "node kinds must NOT reach the bus/feed")
+
+        j._automation_emit("run_completed", {"status": "ok"}, "run_1")
+        self.assertEqual(len(j.ui.calls), 2)
+        self.assertEqual(len(bus), 1, "run kinds still reach the bus")
+
+    def test_jarvisui_emit_automation_rides_signal_with_dict_payload(self):
+        import ui
+
+        class FakeSig:
+            def __init__(self):
+                self.emitted = []
+
+            def emit(self, *a):
+                self.emitted.append(a)
+
+        class FakeWin:
+            pass
+
+        j = ui.JarvisUI.__new__(ui.JarvisUI)
+        w = FakeWin()
+        w._auto_sig = FakeSig()
+        j._win = w
+        j.emit_automation("run_paused", {"x": 1}, "r2")
+        self.assertEqual(w._auto_sig.emitted[0][0], "run_paused")
+        self.assertEqual(w._auto_sig.emitted[0][2], "r2")
+        j.emit_automation("weird", "not-a-dict", "r2")
+        self.assertEqual(w._auto_sig.emitted[1][1], {},
+                         "non-dict payload is coerced, never raised")
+
+    def test_mainwindow_signal_reaches_canvas_slot(self):
+        import ui
+        self.assertTrue(hasattr(ui.MainWindow, "_auto_sig"))
+        self.assertTrue(callable(ui.HudCanvas.on_automation_event))
+
+
 class TestV2ReactorPaint(unittest.TestCase):
 
     @classmethod

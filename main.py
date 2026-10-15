@@ -2873,6 +2873,15 @@ class JarvisLive:
         # per-node detail would flood it, and it already lives in the run
         # record (config/automations/runs/…) and the automations panel.
         kind = str(kind or "")
+        # V2 core (Layer D): the HUD band consumes run AND node kinds over
+        # its own queued Qt signal — a UI observer seam, not a second bus.
+        # It sits BEFORE the run-only filter below on purpose.
+        try:
+            _emit = getattr(self.ui, "emit_automation", None)
+            if callable(_emit):
+                _emit(kind, payload or {}, run_id)
+        except Exception:
+            pass
         if not (kind.startswith("run_") or kind == "approval_waiting"):
             return
         self.emit_event(EventType.CUSTOM, source="automation",

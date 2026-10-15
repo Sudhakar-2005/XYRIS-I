@@ -444,6 +444,12 @@ class HudCanvas(QWidget):
         self._par_on = False
         self.setMouseTracking(True)
 
+        # V2 Layer D: the automation indicator band — fed only by real
+        # automation events (on_automation_event, queued signal from main),
+        # painted by age-based recipes from reactor_visual.auto_band.
+        self._auto: dict = {}
+        self._auto_pulse = 0.0
+
         self._tick       = 0
         self._scale      = 1.0
         self._tgt_scale  = 1.0
@@ -649,6 +655,53 @@ class HudCanvas(QWidget):
         self._par_tgt = QPointF(0.0, 0.0)
         try:
             super().leaveEvent(e)
+        except Exception:
+            pass
+
+    # ── automation event seam (V2 Layer D — queued Qt signal, not the bus) ──
+
+    def on_automation_event(self, kind: str, payload, run_id: str) -> None:
+        """Record a real automation event for the indicator band.
+
+        Delivered on the GUI thread via ``MainWindow._auto_sig`` (queued
+        across the asyncio boundary, same seam pattern as ``_state_sig``).
+        Unknown kinds are ignored; the same kind for the same run within
+        150 ms is deduplicated; a new run_id always takes over the band.
+        Never raises — it is a UI observer, not part of the run path.
+        """
+        try:
+            k = str(kind or "")
+            if _rviz is None or not hasattr(_rviz, "AUTO_KINDS") \
+                    or k not in _rviz.AUTO_KINDS:
+                return
+            rid = str(run_id or "")
+            now = time.monotonic()
+            cur = self._auto or {}
+            if (cur.get("kind") == k and cur.get("run") == rid
+                    and now - float(cur.get("at", 0.0)) < 0.15):
+                return
+            closed = bool(cur.get("close"))
+            if cur.get("run") == rid and closed and (
+                    k in _rviz.AUTO_ACTIVE or k in _rviz.AUTO_HOLD):
+                # Late/out-of-order traffic after a terminal outcome must
+                # not resurrect the band for a run that already ended.
+                return
+            if cur.get("run") == rid:
+                # same run: keep the band's start time when the visible
+                # class is unchanged (terminal TTLs must not restart),
+                # refresh `last` so staleness tracks ongoing traffic.
+                at = cur.get("at", now) if cur.get("kind") == k else now
+                last = now
+            else:
+                at = last = now          # a new run replaces the old band
+            closed = closed and cur.get("run") == rid
+            if k in _rviz.AUTO_DONE or k in _rviz.AUTO_STOP \
+                    or k in _rviz.AUTO_FADE:
+                closed = True
+            self._auto = {"kind": k, "at": at, "last": last,
+                          "run": rid, "close": closed}
+            if k.startswith("node_"):
+                self._auto_pulse = now
         except Exception:
             pass
 
@@ -1072,6 +1125,43 @@ class HudCanvas(QWidget):
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
 
+    def _paint_automation_band(self, p, cx, cy, r, main, blend):
+        """Layer D: automation indicator band at 12 o'clock — driven only by
+        real events (see on_automation_event). Colour AND a text label carry
+        the meaning (spec §13: never colour alone). No percentages: node
+        payloads carry no totals, so progress is not drawn."""
+        if not self._auto or _rviz is None or not hasattr(_rviz, "auto_band"):
+            return
+        res = _rviz.auto_band(self._auto.get("kind", ""),
+                              time.monotonic(),
+                              float(self._auto.get("last", 0.0)),
+                              float(self._auto.get("at", 0.0)))
+        if res is None:
+            return
+        cls, alpha, label, _age = res
+        if self._reduced_motion and cls != "active" and cls != "hold":
+            # static window for terminal flashes: still expires by time,
+            # but never pulses or fades on screen
+            alpha = {"done": 0.80, "stop": 0.70, "clear": 0.45}.get(cls, alpha)
+        if cls == "active":
+            pa = time.monotonic() - self._auto_pulse
+            if 0.0 <= pa < 0.4:
+                alpha = min(1.0, alpha + 0.25 * (1.0 - pa / 0.4))
+        colour = {"active": main,
+                  "hold": qcol(C.ACC),
+                  "done": qcol(C.GREEN),
+                  "stop": qcol(C.RED),
+                  "clear": main}.get(cls, main)
+        span = 46.0
+        rad = r * 1.10
+        box = QRectF(cx - rad, cy - rad, rad * 2, rad * 2)
+        p.setPen(QPen(blend(colour, alpha), 3.0))
+        p.drawArc(box, int((90.0 - span / 2.0) * 16), int(span * 16))
+        p.setPen(QPen(blend(colour, min(0.95, alpha + 0.15)), 1))
+        p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        p.drawText(QRectF(cx - r * 0.6, cy - rad + 3.0, r * 1.2, 11.0),
+                   Qt.AlignmentFlag.AlignCenter, label)
+
     def _paint_core_fallback(self, p, cx, cy, r):
         """Simple orb drawn after a centrepiece paint failure (V2 §14).
         Self-contained — it must not call the layer helpers, because the
@@ -1290,6 +1380,9 @@ class HudCanvas(QWidget):
         # 10. Particles above the name ring, plus the VERIFYING scan arc.
         self._paint_particles(p, cx, cy, r, t, m, main, blend)
         self._paint_scan(p, cx, cy, r, t, acc, blend)
+
+        # 11. Automation indicator band (Layer D) — real events only.
+        self._paint_automation_band(p, cx, cy, r, main, blend)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -4795,6 +4888,7 @@ class MainWindow(QMainWindow):
     _confirm_hide_sig = pyqtSignal()
     _wake_dl_sig    = pyqtSignal(bool, str)  # wake-word install finished (ok, message)
     _quiz_sig       = pyqtSignal(str, object, object)  # (topic, questions, grader)
+    _auto_sig       = pyqtSignal(str, object, str)  # (kind, payload, run_id) - V2 core band, any thread
     _quiz_hide_sig  = pyqtSignal()
     _review_sig     = pyqtSignal(str, str, object, object)  # document review payload
     _gesture_sig    = pyqtSignal(str, object)   # (gesture_name, gesture_data)
@@ -4952,6 +5046,9 @@ class MainWindow(QMainWindow):
 
         self._log_sig.connect(self._log.append_log)
         self._state_sig.connect(self._apply_state)
+        # V2 Layer D: automation events arrive from the asyncio thread and
+        # are delivered queued to the canvas — same seam as _state_sig.
+        self._auto_sig.connect(self.hud.on_automation_event)
         self._content_sig.connect(self._show_content)
         self._reconfig_sig.connect(self._show_setup)
         self._camera_sig.connect(self._show_camera_frame)
@@ -7548,6 +7645,19 @@ class JarvisUI:
         GIL, so no signal/lock is needed for this cosmetic value."""
         try:
             self._win.hud.set_audio_level(level)
+        except Exception:
+            pass
+
+    def emit_automation(self, kind: str, payload, run_id: str) -> None:
+        """Thread-safe: a real automation event to the HUD core band (V2
+        Layer D). Delivered over Qt's queued signal path — never the event
+        bus, which keeps its run-only filter so the activity feed is not
+        flooded by per-node detail. A UI observer call: never raises."""
+        try:
+            self._win._auto_sig.emit(
+                str(kind or ""),
+                payload if isinstance(payload, dict) else {},
+                str(run_id or ""))
         except Exception:
             pass
 

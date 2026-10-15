@@ -296,6 +296,71 @@ def ring_bases(t: float, ring_rate: float = 1.0,
     return tuple(out)
 
 
+# ── Layer D: automation event → indicator band (V2, honest kinds only) ───────
+#
+# Only the kinds core/automation/runtime.py really emits. Unknown kinds →
+# None → no band. The band never shows a percentage: node payloads carry no
+# totals (node_started = {node, type}; node_finished = {node, ok, ...}), so
+# progress would have to be invented — it is not drawn. Completion flashes
+# only on run_completed, which the automation adapter refuses to emit when a
+# required verification failed (V1 Phase 5/6), so success is verifier-gated.
+
+AUTO_ACTIVE = frozenset({"run_started", "run_resumed", "node_started",
+                         "node_finished", "node_retry"})
+AUTO_HOLD = frozenset({"run_paused", "run_waiting_approval",
+                       "approval_waiting"})
+AUTO_STOP = frozenset({"run_failed"})
+AUTO_FADE = frozenset({"run_dry_run", "run_cancelled"})
+AUTO_DONE = frozenset({"run_completed"})
+AUTO_KINDS = AUTO_ACTIVE | AUTO_HOLD | AUTO_STOP | AUTO_FADE | AUTO_DONE
+
+AUTO_STALE_S = 300.0                # a silent run band expires (stale info)
+AUTO_OUTCOME_TTL = {                # seconds each terminal flash stays
+    "run_completed": 1.6,
+    "run_failed": 4.0,
+    "run_dry_run": 2.5,
+    "run_cancelled": 3.0,
+}
+AUTO_LABELS = {
+    "run_started": "RUN", "run_resumed": "RUN",
+    "node_started": "RUN", "node_finished": "RUN", "node_retry": "RUN",
+    "run_paused": "PAUSED", "run_waiting_approval": "APPROVE",
+    "approval_waiting": "APPROVE",
+    "run_failed": "FAILED", "run_cancelled": "CANCELLED",
+    "run_completed": "DONE", "run_dry_run": "DRY RUN",
+}
+
+
+def auto_band(kind: str, now: float, last_at: float,
+              at: float) -> tuple[str, float, str, float] | None:
+    """Automation indicator recipe: (cls, alpha, label, age_frac) or None.
+
+    * active/hold — persistent while events are recent (``AUTO_STALE_S``);
+      alpha constant, age_frac 0.
+    * terminal kinds — visible for ``AUTO_OUTCOME_TTL[kind]`` seconds from
+      *at*, alpha decaying with age; age_frac runs 0→1 then expires.
+    Pure and testable: no clock reads, no drawing.
+    """
+    k = str(kind or "")
+    if k not in AUTO_KINDS:
+        return None
+    if k in AUTO_ACTIVE or k in AUTO_HOLD:
+        if now - last_at > AUTO_STALE_S:
+            return None
+        cls = "active" if k in AUTO_ACTIVE else "hold"
+        return (cls, 0.75, AUTO_LABELS.get(k, "RUN"), 0.0)
+    ttl = AUTO_OUTCOME_TTL.get(k, 0.0)
+    age = now - at
+    if ttl <= 0.0 or age < 0.0 or age > ttl:
+        return None
+    frac = age / ttl
+    if k in AUTO_DONE:
+        return ("done", 0.90 * (1.0 - frac), AUTO_LABELS[k], frac)
+    if k in AUTO_STOP:
+        return ("stop", 0.85 * (1.0 - 0.6 * frac), AUTO_LABELS[k], frac)
+    return ("clear", 0.55 * (1.0 - frac), AUTO_LABELS[k], frac)
+
+
 # ── particles (bounded, deterministic seeding, no physics) ──────────────────
 
 @dataclass
