@@ -193,6 +193,74 @@ def status_lit(state: str | None) -> float:
     return 0.12                                     # unknown → rest
 
 
+# ── holographic ring set (per-ring motion profiles) ─────────────────────────
+#
+# Layer C of the V2 design: every ring carries its own rate, direction, span
+# and phase, so the set can never degenerate into one collective spin. The
+# tested invariant is that no two rings share rate AND direction. `rate` is
+# deg/sec at multiplier 1.0 (calm idle); the state's Motion.ring_rate (plus
+# the speaking boost) multiplies it in the renderer, exactly as V1 did —
+# so ring speeds remain state-driven, never decorative.
+
+@dataclass(frozen=True)
+class RingProfile:
+    name: str
+    radius: float          # fraction of reactor radius r
+    span: float            # degrees of each arc
+    count: int             # arcs around the circle
+    direction: int         # +1 clockwise, -1 counter-clockwise
+    rate: float            # base deg/sec at multiplier 1.0
+    phase: float           # static phase offset (degrees)
+    colour: str            # "main" (cyan) | "acc" (state accent)
+    alpha: float
+    width: float
+
+
+RING_PROFILES: tuple[RingProfile, ...] = (
+    RingProfile("outer",       1.005,  40.0, 3, +1,  3.0,  0.0, "main", 0.30, 1.4),
+    RingProfile("energy",      0.955, 118.0, 2, +1,  9.0,  0.0, "acc",  0.75, 2.0),
+    RingProfile("calibration", 0.845,  82.0, 3, -1, 15.0, 40.0, "main", 0.38, 1.3),
+    RingProfile("orbital_a",   0.760, 150.0, 1, +1, 21.0,  0.0, "acc",  0.45, 1.6),
+    RingProfile("orbital_b",   0.660,  64.0, 4, -1, 27.0,  0.0, "main", 0.26, 1.1),
+    RingProfile("orbital_c",   0.545, 128.0, 2, +1, 33.0,  0.0, "main", 0.30, 1.2),
+)
+
+# Fine radial markings (Layer A): a slow technical tick band on the reactor
+# itself, rotating on its own constant profile — deliberately NOT state-scaled,
+# so restraint survives even when the working rings hurry.
+TECH_MARKINGS = {
+    "radius_base": 0.740,     # every tick starts here (fraction of r)
+    "radius_fine": 0.752,     # normal tick tip
+    "radius_major": 0.765,    # every major_every-th tick reaches further out
+    "count": 90,              # one tick per 4 degrees
+    "major_every": 6,
+    "rate": 4.0,              # deg/sec, own profile
+}
+
+# Calibration ring's fine ticks follow that ring's own base angle.
+CALIBRATION_TICKS = {"count": 36, "radius_in": 0.800, "radius_out": 0.817,
+                     "alpha": 0.16}
+
+
+def ring_bases(t: float, ring_rate: float = 1.0,
+               reduced: bool = False) -> tuple[float, ...]:
+    """Base angle (degrees) for each ring profile at time *t*.
+
+    ``ring_rate`` is the state multiplier (V1 semantics: idle ~1, working up
+    to ~3, speaking adds, reduced motion ×0.12 applied by the caller).
+    ``reduced=True`` freezes rotation entirely — geometry stays readable and
+    motionless. Deterministic in *t*; no allocation of geometry.
+    """
+    out = []
+    for prof in RING_PROFILES:
+        if reduced:
+            out.append(prof.phase % 360.0)
+        else:
+            out.append((prof.phase + t * prof.rate * ring_rate
+                        * prof.direction) % 360.0)
+    return tuple(out)
+
+
 # ── particles (bounded, deterministic seeding, no physics) ──────────────────
 
 @dataclass

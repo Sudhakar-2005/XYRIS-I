@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import platform
@@ -53,6 +54,10 @@ try:
 except Exception:      # pragma: no cover — HUD falls back to raw strings
     WORKING_STATES = frozenset({"THINKING", "PROCESSING"})
     _state_transition = None
+
+# Reactor paint failures are logged once and absorbed (V2 failure handling):
+# a visual bug must never reach the Qt event loop again.
+_log = logging.getLogger("aether.hud")
 
 
 def _base_dir() -> Path:
@@ -425,6 +430,10 @@ class HudCanvas(QWidget):
         except Exception:
             self.hud_style = "face"
         self._core_phase = 0.0
+        # V2 §14: after the first reactor paint failure, keep drawing the
+        # simple-orb fallback instead of retrying the broken detail every
+        # frame (logged once — see paintEvent).
+        self._core_paint_failed = False
 
         self._tick       = 0
         self._scale      = 1.0
@@ -901,6 +910,124 @@ class HudCanvas(QWidget):
         p.setPen(QPen(blend(acc, 0.25), 1.2))
         p.drawArc(box, int((base + 78) * 16), int(30 * 16))
 
+    # ── V2 layers (CORE_VISUAL_V2_DESIGN) ────────────────────────────────────
+
+    def _paint_tech_markings(self, p, cx, cy, r, t, main, blend):
+        """Layer A: fine circular technical markings on the reactor itself —
+        a tick band rotating on its own constant profile (never state-scaled,
+        so restraint survives while the working rings hurry)."""
+        if _rviz is None:
+            return
+        tm = getattr(_rviz, "TECH_MARKINGS", None)
+        if not tm:
+            return
+        base = 0.0 if self._reduced_motion else (t * tm["rate"]) % 360.0
+        fine, major = [], []
+        n, every = tm["count"], tm["major_every"]
+        r0 = r * tm["radius_base"]
+        for i in range(n):
+            a = math.radians(base + i * (360.0 / n))
+            ca, sa = math.cos(a), math.sin(a)
+            if i % every == 0:
+                r1 = r * tm["radius_major"]
+                major.append(QLineF(cx + ca * r0, cy + sa * r0,
+                                    cx + ca * r1, cy + sa * r1))
+            else:
+                r1 = r * tm["radius_fine"]
+                fine.append(QLineF(cx + ca * r0, cy + sa * r0,
+                                   cx + ca * r1, cy + sa * r1))
+        p.setPen(QPen(blend(main, 0.30), 1.2))
+        p.drawLines(major)
+        p.setPen(QPen(blend(main, 0.14), 1))
+        p.drawLines(fine)
+
+    def _paint_ring_set(self, p, cx, cy, r, t, mult, main, acc, blend):
+        """Layer C: the holographic ring set — every ring on its own motion
+        profile (rate/direction/phase from reactor_visual.RING_PROFILES) plus
+        the calibration ring's fine ticks following that ring's own base."""
+        if _rviz is None or not getattr(_rviz, "RING_PROFILES", None):
+            return
+        bases = _rviz.ring_bases(t, mult, False)
+        cols = {"main": main, "acc": acc}
+        for prof, base in zip(_rviz.RING_PROFILES, bases):
+            rad = r * prof.radius
+            box = QRectF(cx - rad, cy - rad, rad * 2, rad * 2)
+            p.setPen(QPen(blend(cols.get(prof.colour, main), prof.alpha),
+                          prof.width))
+            for sgm in range(prof.count):
+                p.drawArc(box, int((base + sgm * (360.0 / prof.count)) * 16),
+                          int(prof.span * 16))
+        ct = getattr(_rviz, "CALIBRATION_TICKS", None)
+        if not ct:
+            return
+        cal = None
+        for prof, base in zip(_rviz.RING_PROFILES, bases):
+            if prof.name == "calibration":
+                cal = base
+                break
+        if cal is None:
+            return
+        ticks = []
+        for i in range(ct["count"]):
+            a = math.radians(cal + i * (360.0 / ct["count"]))
+            ca, sa = math.cos(a), math.sin(a)
+            ticks.append(QLineF(cx + ca * r * ct["radius_in"],
+                                cy + sa * r * ct["radius_in"],
+                                cx + ca * r * ct["radius_out"],
+                                cy + sa * r * ct["radius_out"]))
+        p.setPen(QPen(blend(main, ct["alpha"]), 1))
+        p.drawLines(ticks)
+
+    def _paint_transition_pulse(self, p, cx, cy, r, acc, blend):
+        """Layer A/D: one expanding ring per real state transition, radius
+        grown from pulse age, alpha from pulse_alpha. Suppressed under
+        reduced motion (colour + label carry meaning there)."""
+        if _rviz is None or self._reduced_motion or not self._pulses:
+            return
+        now = time.monotonic()
+        best_a, best_age = 0.0, 0.0
+        for born in self._pulses.values():
+            age = now - born
+            a = _rviz.pulse_alpha(age)
+            if a > best_a:
+                best_a, best_age = a, age
+        if best_a <= 0.03:
+            return
+        frac = min(1.0, best_age / _rviz.PULSE_TTL)
+        pr = r * (0.44 + 0.58 * frac)
+        p.setPen(QPen(blend(acc, best_a * 0.55), 2.0))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
+
+    def _paint_core_fallback(self, p, cx, cy, r):
+        """Simple orb drawn after a centrepiece paint failure (V2 §14).
+        Self-contained — it must not call the layer helpers, because the
+        helper that just failed must not be able to break the fallback."""
+        try:
+            main, acc = self._core_colours()
+        except Exception:
+            main = acc = QColor("#22d3ee")
+        bg = qcol(C.BG)
+
+        def bl(col: QColor, a: float) -> QColor:
+            k = max(0.0, min(1.0, a))
+            return QColor(int(bg.red() + (col.red() - bg.red()) * k),
+                          int(bg.green() + (col.green() - bg.green()) * k),
+                          int(bg.blue() + (col.blue() - bg.blue()) * k))
+
+        gr = QRadialGradient(cx, cy, r * 0.70)
+        gr.setColorAt(0.0, bl(main, 0.55))
+        gr.setColorAt(0.60, bl(main, 0.18))
+        gr.setColorAt(1.0, bl(main, 0.0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(gr))
+        p.drawEllipse(QRectF(cx - r * 0.70, cy - r * 0.70, r * 1.40, r * 1.40))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(bl(acc, 0.50), 1.6))
+        p.drawEllipse(QRectF(cx - r * 0.90, cy - r * 0.90, r * 1.80, r * 1.80))
+        p.setPen(QPen(bl(main, 0.30), 1))
+        p.drawEllipse(QRectF(cx - r * 0.355, cy - r * 0.355,
+                             r * 0.71, r * 0.71))
 
     def _paint_core(self, p: QPainter, cx: float, cy: float, r: float,
                     W: float = 0.0, H: float = 0.0):
@@ -943,6 +1070,32 @@ class HudCanvas(QWidget):
             g.setColorAt(1.00, blend(main, a1))
             p.setBrush(QBrush(g))
             p.drawEllipse(QRectF(cx - gr, cy - gr, gr * 2, gr * 2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        # 1b. Translucent outer shells — the boundary the sphere lives inside.
+        #     Two thin discs+ rims give the layered depth the spec asks for
+        #     without stack-of-copies cost: alpha is pre-blended, not composited.
+        for shell_rr, fill_a, rim_a, rim_w in ((0.72, 0.05, 0.16, 1.2),
+                                               (0.56, 0.04, 0.12, 1.0)):
+            sr = r * shell_rr
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(blend(main, fill_a * (0.7 + 0.3 * lift))))
+            p.drawEllipse(QRectF(cx - sr, cy - sr, sr * 2, sr * 2))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(blend(main, rim_a * (0.7 + 0.3 * lift)), rim_w))
+            p.drawEllipse(QRectF(cx - sr, cy - sr, sr * 2, sr * 2))
+
+        # 1c. The hot core — a small luminous heart under everything else.
+        #     `breath` is the gentle reactor pulse of the IDLE brief: a slow
+        #     sine, amplitude near zero when nothing else is driving `lift`.
+        breath = 0.0 if self._reduced_motion else 0.05 * math.sin(t * 1.6)
+        hc = r * 0.22
+        g2 = QRadialGradient(cx, cy, hc)
+        g2.setColorAt(0.00, blend(main, min(0.80, 0.38 * lift + breath)))
+        g2.setColorAt(0.55, blend(main, min(0.50, 0.20 * lift + breath)))
+        g2.setColorAt(1.00, blend(main, 0.0))
+        p.setBrush(QBrush(g2))
+        p.drawEllipse(QRectF(cx - hc, cy - hc, hc * 2, hc * 2))
         p.setBrush(Qt.BrushStyle.NoBrush)
 
         # 2. Frame marks at the corners of the whole canvas, not of the circle.
@@ -998,28 +1151,23 @@ class HudCanvas(QWidget):
         #     Stays visible under reduced motion as a static lit window.
         self._paint_status_ring(p, cx, cy, r, t, m, acc, blend)
 
-        # 6. Sweeping arcs. Long spans, not dashes — the original's grandeur
-        #    came from a few big strokes. Speed is the state: idle drifts,
-        #    working hurries, speaking runs.
-        rate = 1.0 + (1.9 if self.state in WORKING_STATES else 0.0) \
+        # 5c. Fine circular technical markings on the reactor (Layer A) —
+        #     their own constant rotation, independent of the state rates.
+        self._paint_tech_markings(p, cx, cy, r, t, main, blend)
+
+        # 6. The holographic ring set (Layer C): every ring carries its own
+        #    rate/direction/span from reactor_visual.RING_PROFILES — slow
+        #    outer structure, state-scaled energy sweep, counter-rotating
+        #    calibration with fine ticks, three orbital arcs. The state
+        #    multiplier works exactly as V1's did (idle ~1, working faster,
+        #    speaking adds, reduced motion ×0.12).
+        rate_mult = 1.0 + (1.9 if self.state in WORKING_STATES else 0.0) \
                    + (1.2 if self.speaking else 0.0)
         if m is not None:
-            rate = m.ring_rate + (1.2 if self.speaking else 0.0)
+            rate_mult = m.ring_rate + (1.2 if self.speaking else 0.0)
         if self._reduced_motion:
-            rate *= 0.12
-        for k, (rr, span, count, dirn, col, a, wid) in enumerate((
-                (0.955, 118, 2, +1, acc,  0.75, 2.0),
-                (0.845, 82,  3, -1, main, 0.38, 1.3),
-                (0.760, 150, 1, +1, acc,  0.45, 1.6),
-                (0.660, 64,  4, -1, main, 0.26, 1.1),
-                (0.545, 128, 2, +1, main, 0.30, 1.2))):
-            rad = r * rr
-            p.setPen(QPen(blend(col, a), wid))
-            box = QRectF(cx - rad, cy - rad, rad * 2, rad * 2)
-            base = (t * rate * (9 + k * 6) * dirn) % 360.0
-            for sgm in range(count):
-                p.drawArc(box, int((base + sgm * (360.0 / count)) * 16),
-                          int(span * 16))
+            rate_mult *= 0.12
+        self._paint_ring_set(p, cx, cy, r, t, rate_mult, main, acc, blend)
 
         # 6b. Neural sphere — nodes, edges, travelling signals. Sits under
         #     the voice ring so the audio layer keeps the foreground.
@@ -1062,6 +1210,10 @@ class HudCanvas(QWidget):
             p.drawText(QRectF(cx - r, cy - fsz, r * 2, fsz * 2),
                        Qt.AlignmentFlag.AlignCenter, name)
 
+        # 9b. Transition pulse ring — expands from a REAL state transition
+        #     only (born in _on_state_event, never a timer), age-faded.
+        self._paint_transition_pulse(p, cx, cy, r, acc, blend)
+
         # 10. Particles above the name ring, plus the VERIFYING scan arc.
         self._paint_particles(p, cx, cy, r, t, m, main, blend)
         self._paint_scan(p, cx, cy, r, t, acc, blend)
@@ -1090,31 +1242,48 @@ class HudCanvas(QWidget):
         # capped by width, so it fills the HUD at any window size — including
         # fullscreen — without ever colliding with the status text below.
         _sy_status = cy + fw * 0.40
-        if self._avatar is not None and self.hud_style == "face":
-            _band_t = 12.0
-            _band_h = max(60.0, _sy_status - 12.0 - _band_t)
-            _r_head = min(fw * 0.355, _band_h / (self._avatar.SPAN + 0.08))
-            _head_cy = _band_t + (_band_h - self._avatar.SPAN * _r_head) / 2.0 + _r_head
-
-            if self.muted:
-                _main = _acc = qcol(C.MUTED_C)
-            else:
-                _main = qcol(C.PRI)
-                if self.speaking:
-                    _acc = qcol(C.ACC)
+        _band_t = 12.0
+        _band_h = max(60.0, _sy_status - 12.0 - _band_t)
+        # V2 §14: the centrepiece paints inside a fail-soft boundary. The
+        # first failure is logged and flips the canvas to the self-contained
+        # simple-orb fallback for good — a visual bug must never reach the Qt
+        # loop again (the 0xC0000409 crash was exactly this path).
+        _use_fallback = self._core_paint_failed
+        if not _use_fallback:
+            try:
+                if self._avatar is not None and self.hud_style == "face":
+                    _r_head = min(fw * 0.355,
+                                  _band_h / (self._avatar.SPAN + 0.08))
+                    _head_cy = _band_t + \
+                        (_band_h - self._avatar.SPAN * _r_head) / 2.0 + _r_head
+                    if self.muted:
+                        _main = _acc = qcol(C.MUTED_C)
+                    else:
+                        _main = qcol(C.PRI)
+                        if self.speaking:
+                            _acc = qcol(C.ACC)
+                        else:
+                            _acc = self._state_accent() or qcol(C.PRI)
+                    self._avatar.paint(p, cx, _head_cy, _r_head,
+                                       _main, _acc, qcol(C.BG))
                 else:
-                    _acc = self._state_accent() or qcol(C.PRI)
-            self._avatar.paint(p, cx, _head_cy, _r_head, _main, _acc, qcol(C.BG))
-
-        # reactor core — the other centrepiece, and the fallback if the head
-        # could not be built. There is no third path: the old face.png branch
-        # was unreachable (no such file ships) and the bare orb it fell through
-        # to is what this replaces.
-        else:
-            _band_t = 12.0
-            _band_h = max(60.0, _sy_status - 12.0 - _band_t)
-            _r = min(W * 0.46, _band_h / 2.0)
-            self._paint_core(p, cx, _band_t + _band_h / 2.0, _r, W, _band_h)
+                    # reactor core — the other centrepiece, and the fallback
+                    # if the head could not be built. There is no third path.
+                    _r = min(W * 0.46, _band_h / 2.0)
+                    self._paint_core(p, cx, _band_t + _band_h / 2.0,
+                                     _r, W, _band_h)
+            except Exception:
+                self._core_paint_failed = True
+                _use_fallback = True
+                _log.exception("HUD centrepiece paint failed once — "
+                               "simple-orb fallback from here on")
+        if _use_fallback:
+            try:
+                _r = min(W * 0.46, _band_h / 2.0)
+                self._paint_core_fallback(p, cx, _band_t + _band_h / 2.0, _r)
+            except Exception:
+                _log.exception("simple-orb fallback failed too — "
+                               "centrepiece skipped this frame")
 
         # status text — every V3 state gets a distinct glyph, and the colour
         # comes from the same _state_accent() the reactor and face use, so the
