@@ -228,13 +228,20 @@ Read honestly: **averages stay inside the 60 Hz budget in every
 scenario; the tail (p95) exceeds it in the heavy states**, i.e. occasional
 over-budget frames (skipped vsync) while working — on this software raster
 path, with run-to-run variance (640×420 run measured EXECUTING avg 9.84 ms;
-900×560 runs ranged 5.97–13.45 ms depending on system load). Live
-measurement: launch with `AETHER_HUD_PAINT=1` and watch
-`aether.hud` log lines (`hud paint measured: avg … over 240 frames
-(60 Hz budget = 16.67 ms)`) — that is the only source an FPS claim may
-ever cite. Optimization candidates if the tail matters: cache the
-atmosphere/shell gradients per quantised lift bucket, pre-bake static
-graduations per (size, colour).
+900×560 runs ranged 5.97–13.45 ms depending on system load).
+
+**Live app measurement (the authoritative one)** — the real window launched
+with `AETHER_HUD_PAINT=1`, 32 consecutive 240-frame windows over ~7 minutes
+of active use (mic, model, dashboard running): **avg 11.08 – 18.87 ms per
+frame**, i.e. most windows within the 16.67 ms budget and a few clearly
+over it while the system was busy. Takeaway: the frame cost sits near the
+budget, not comfortably under it — a fast machine or the cache candidates
+listed below are required for sustained 60 Hz. Watch live with
+`AETHER_HUD_PAINT=1` (`aether.hud` log lines: `hud paint measured: avg …
+over 240 frames (60 Hz budget = 16.67 ms)`) — that log is the only source
+an FPS claim may ever cite. Optimization candidates if the tail matters:
+cache the atmosphere/shell gradients per quantised lift bucket, pre-bake
+static graduations per (size, colour).
 
 ## Phase 9 record
 
@@ -264,8 +271,10 @@ untouched and green — no existing behaviour removed).
 - Band freshness: persistent classes expire after 300 s without run events;
   terminal flashes expire on their TTL; late events after a terminal are
   ignored (terminal-wins); no automation traffic ⇒ no band (honest default).
-- Performance: averages within budget, p95 tail over budget in heavy states
-  on this machine (measured table above); no FPS claim is made.
+- Performance: bench averages within the 60 Hz budget but p95 tails over it
+  in heavy states; live-app 240-frame windows ranged 11.08–18.87 ms avg,
+  some over budget while the machine was busy (all measured on this box);
+  no FPS claim is made.
 - Optional features degrade silently: no pointer moves ⇒ no parallax; no
   automation events ⇒ no band; no audio ⇒ state-driven animation only.
 
