@@ -10,13 +10,13 @@
 | Session transcripts | `memory/sessions/*.json` (`memory_manager.py:557`) | M1, M2, M3 datasets (ground truth = user's next accepted action) |
 | `_session_log` + summaries | `main.py:795`, `memory_manager.py:500` | M2, M4 context labels |
 | Automation run statistics | `store.update_statistics` + `config/automations/**` | M8 reliability |
-| Model tiers/stats | `RungStats` (`model_manager.py:67-86`, currently unread) | M7 provider selection (Phase 8 consumer) |
+| Model tiers/stats | `RungStats` (`core/model_manager.py`) - dumped to `memory/model_stats.json` throttled from `record()`, read by `tools/eval_scorecard.py` | M7 provider selection |
 | Perf marks | `core/perf.py` used in `main.py` | M9 latency |
 | Event bus + `correlation_id` | `core/event_bus.py:28`, `main.py:2819-2828` | M5/M6 tracing |
 | Memory search scoring | `memory_manager.py:326-346` | M1 baseline scorer |
 | Capability catalog | `core/automation/capability.py` | M3/M8 validation checks |
 
-**To add (Phase 1/8):** structured log lines from `evaluate_gates` + `Verdict` (they don't exist yet); dataset export script (JSONL, anonymized).
+**Phase 1/8 additions (status 2026-10-13):** dataset export script DONE - `tools/eval_export_datasets.py` (JSONL, secret-scrubbed, local-only: `tests/eval/datasets/` is gitignored because it mirrors personal transcripts); gate denials print structured `[Policy]` lines at the seam and verifier verdicts now ride the TOOL_RESULT event data (`main.py` dispatch), giving M5/M6 a machine-readable outcome stream to trace.
 
 ## 2. Metric definitions
 
