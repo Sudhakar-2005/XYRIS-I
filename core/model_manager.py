@@ -38,9 +38,16 @@ THE LIVE RUNG
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # The Live model, defined once. main.py imports this for the conversation's
 # session; core/gemini.py uses it for one-shot side calls. Change it HERE.
@@ -78,6 +85,14 @@ COOLDOWN_SECONDS = 300
 LIVE_SLOTS = 3
 LIVE_SLOT_WAIT = 3.0
 
+# Where a live session leaves its RungStats for offline consumers
+# (tools/eval_scorecard.py reads this for the M7 provider mix). Throttled:
+# record() never writes more than once per interval, atomically, so the hot
+# path pays a monotonic check and the file only moves when there is news.
+DUMP_MIN_INTERVAL_S = 30.0
+DEFAULT_DUMP_PATH = (Path(__file__).resolve().parent.parent
+                     / "memory" / "model_stats.json")
+
 
 class RungStats:
     """Counters for one rung (one model string). Plain values only —
@@ -106,11 +121,15 @@ class ModelManager:
     every method is thread-safe because gemini.call runs on plugin, UI and
     event-loop threads alike."""
 
-    def __init__(self, ladders: dict[str, tuple[str, ...]] | None = None):
+    def __init__(self, ladders: dict[str, tuple[str, ...]] | None = None,
+                 dump_path: Path | str | None = None):
         self._ladders = {t: tuple(r) for t, r in
                          (ladders if ladders is not None else LADDERS).items()}
         self._stats: dict[str, RungStats] = {}
         self._lock = threading.Lock()
+        self._dump_path = Path(dump_path) if dump_path is not None \
+            else DEFAULT_DUMP_PATH
+        self._last_dump = 0.0
 
     # ── ladder ──────────────────────────────────────────────────────────
 
@@ -220,7 +239,47 @@ class ModelManager:
                     st.cooldown_until = max(
                         st.cooldown_until,
                         time.monotonic() + COOLDOWN_SECONDS)
+        self._maybe_dump()
         return reason
+
+    # ── live dump (Phase 8 / M7) ────────────────────────────────────────
+
+    def dump_stats(self) -> bool:
+        """Write ``snapshot()`` to the dump path with provenance metadata.
+
+        Atomic (temp + os.replace) so a consumer never reads a half file.
+        Fail-soft: a read-only disk must never break a model call, so any
+        error returns False instead of raising. The ``_meta`` key carries
+        when this snapshot was taken — the scorecard shows it so a stale
+        dump can never masquerade as live data.
+        """
+        try:
+            payload = {
+                "_meta": {
+                    "updated_at": datetime.now(timezone.utc)
+                                  .isoformat(timespec="seconds"),
+                    "source": "ModelManager.record",
+                    "pid": os.getpid(),
+                },
+            }
+            payload.update(self.snapshot())
+            tmp = self._dump_path.parent / (self._dump_path.name + ".tmp")
+            tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False),
+                           encoding="utf-8")
+            os.replace(tmp, self._dump_path)
+            return True
+        except Exception:
+            logger.debug("model_stats dump failed", exc_info=True)
+            return False
+
+    def _maybe_dump(self) -> None:
+        """Throttled dump hook — one monotonic check on the hot path."""
+        now = time.monotonic()
+        with self._lock:
+            if now - self._last_dump < DUMP_MIN_INTERVAL_S:
+                return
+            self._last_dump = now
+        self.dump_stats()
 
     def snapshot(self) -> dict[str, dict[str, float | int | str]]:
         """Copy of every rung's counters, safe to print or log."""

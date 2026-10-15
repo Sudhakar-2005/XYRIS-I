@@ -1843,10 +1843,16 @@ class JarvisLive:
 
         # M11: the bus hears every turn of the wheel — success and failure
         # alike feed the dashboard stream (§3.15); the prints stay as-is.
+        # Verdict rides the bus when one exists: the machine-readable
+        # twin of the prose note, so M5/M6 tracing can later count
+        # real pass/fail/skip outcomes instead of sniffing prose.
+        _evt_data = {"ok": not _failed, "result": str(result)[:200]}
+        if verdict is not None:
+            _evt_data["verification"] = verdict
         self.emit_event(
             EventType.TOOL_ERROR if _failed else EventType.TOOL_RESULT,
             source=name,
-            data={"ok": not _failed, "result": str(result)[:200]},
+            data=_evt_data,
             priority=Priority.HIGH,
         )
 

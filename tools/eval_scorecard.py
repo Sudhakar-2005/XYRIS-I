@@ -45,10 +45,11 @@ GROUPS: dict[str, tuple[str, list[str]]] = {
 }
 
 NOTES = {
-    "M1": "Relevance (Recall@5) needs the labeled query set from "
-          "memory/sessions/*.json — infra contract score shown; dataset next.",
+    "M1": "Relevance (Recall@5) needs the labeled query set — the anonymized "
+          "export (tests/eval/datasets/, regenerated locally) carries the raw "
+          "turns; pairs still need labeling (human/derived step).",
     "M2": "Routing accuracy needs ground-truth labels (user's next accepted "
-          "action) from transcripts — contract coverage shown.",
+          "action) — raw turns exported, labels are a separate human step.",
     "M3": "Planner deleted in Phase 4 (M3 waiver: chaining + workflow "
           "generator are the only plan producers); generator/validate score.",
     "M4": "Token-overhead labels not yet built — NEEDS-DATA.",
@@ -56,8 +57,8 @@ NOTES = {
           "needs labeled tool outcomes — NEEDS-DATA.",
     "M6": "Reconnect/degraded ladder tests; production recovery rate needs "
           "event-bus traces — contract score shown.",
-    "M7": "Ladder contract score; live provider mix needs a running session "
-          "dumping RungStats — see snapshot below if present.",
+    "M7": "Ladder contract score; live provider mix from the RungStats dump "
+          "— see snapshot below if present.",
     "M8": "Full automation suite score (runtime/actions/adapters).",
     "M9": "Startup + perf gate pass/fail with measured durations.",
 }
@@ -87,8 +88,46 @@ def session_count() -> int:
 
 
 def rung_snapshot() -> dict:
-    """Live RungStats, if a dashboard dump left one behind."""
+    """Live RungStats, if a session dump left one behind."""
     p = ROOT / "memory" / "model_stats.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def m4_overhead() -> dict | None:
+    """Token-budget overhead of the memory core block — exact characters.
+
+    Built from the REAL memory file and the REAL system prompt
+    (core/prompt.txt), so the number is measured, not modelled: no token
+    estimate is invented (the plan's PROMPT_*_CHARS budgets are char
+    budgets). Returns None if the memory module cannot be imported, in
+    which case M4 honestly falls back to NEEDS-DATA.
+    """
+    try:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        from memory.memory_manager import (format_memory_for_prompt,
+                                           load_memory)
+        prompt = (ROOT / "core" / "prompt.txt").read_text(
+            encoding="utf-8", errors="replace")
+        injected = format_memory_for_prompt(load_memory())
+        return {
+            "prompt_chars": len(prompt),
+            "injected_chars": len(injected),
+            "overhead_pct": round(100.0 * len(injected)
+                                  / max(1, len(prompt)), 2),
+        }
+    except Exception:
+        return None
+
+
+def export_info() -> dict:
+    """Counts from the anonymized dataset export, when it has been run."""
+    p = ROOT / "tests" / "eval" / "datasets" / "EXPORT_INFO.json"
     if p.exists():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
@@ -99,11 +138,22 @@ def rung_snapshot() -> dict:
 
 def main() -> int:
     rows, total_p, total_f = [], 0, 0
+    m4 = m4_overhead()
     for mid, (label, files) in GROUPS.items():
         passed, failed, dur = run_group(files)
         total_p += passed
         total_f += failed
-        if not files:
+        note = NOTES[mid]
+        if mid == "M4" and m4:
+            status = "MEASURED"
+            score = (f"{m4['overhead_pct']}% of prompt "
+                     f"({m4['injected_chars']}/{m4['prompt_chars']} chars)")
+            note = ("Core-block token overhead measured on this box (real "
+                    "memory + core/prompt.txt, char-exact); injection "
+                    "contract covered by the Phase 3 memory tests. The "
+                    "plan's reviewer-preference A/B half still needs human "
+                    "labels — NEEDS-DATA.")
+        elif not files:
             status = "NEEDS-DATA"
             score = "—"
         elif failed:
@@ -112,14 +162,23 @@ def main() -> int:
         else:
             status = "PASS"
             score = f"{passed} passed ({dur})"
-        rows.append((mid, label, status, score, NOTES[mid]))
+        rows.append((mid, label, status, score, note))
 
+    info = export_info()
+    export_line = ""
+    if info.get("counts"):
+        c = info["counts"]
+        export_line = (f"Dataset export (local, gitignored): {c.get('turns', 0)} "
+                       f"turns from {c.get('sessions', 0)} sessions, "
+                       f"{c.get('facts', 0)} memory fact(s) — labels NOT "
+                       f"invented by the exporter.  ")
     lines = [
         "# EVAL scorecard — M1–M9",
         "",
         f"Generated: {datetime.now(timezone.utc).isoformat(timespec='seconds')}  ",
         f"Command: `python tools/eval_scorecard.py`  ",
-        f"Session transcripts available for dataset building: {session_count()}",
+        f"Session transcripts available for dataset building: {session_count()}  ",
+        export_line,
         "",
         "| Metric | What | Status | Score | Note |",
         "|---|---|---|---|---|",
@@ -127,14 +186,25 @@ def main() -> int:
     for mid, label, status, score, note in rows:
         lines.append(f"| {mid} | {label} | {status} | {score} | {note} |")
     snap = rung_snapshot()
+    meta = snap.pop("_meta", None) if snap else None
     lines += ["", f"**Totals:** {total_p} passed, {total_f} failed "
                   f"across all groups."]
     if snap:
-        lines += ["", "## RungStats snapshot (M7 live data)", "",
+        when = (meta or {}).get("updated_at", "unknown time")
+        stale = ""
+        try:
+            age_h = (datetime.now(timezone.utc)
+                     - datetime.fromisoformat(when)).total_seconds() / 3600
+            if age_h > 48:
+                stale = f" — STALE ({age_h:.0f}h old)"
+        except Exception:
+            pass
+        lines += ["", f"## RungStats snapshot (M7 live data — updated {when}"
+                      f"{stale})", "",
                   "```json", json.dumps(snap, indent=2), "```"]
     else:
         lines += ["", "_No live RungStats dump found (`memory/model_stats.json`) "
-                     "— M7 provider mix pending a live session._"]
+                         "— M7 provider mix pending a live session._"]
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"scorecard written: {OUT}  ({total_p} passed, {total_f} failed)")
     return 1 if total_f else 0

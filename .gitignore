@@ -21,7 +21,13 @@ config/permissions.json
 memory/long_term.json
 memory/sessions/
 memory/*.db
+memory/model_stats.json
 config/automations/
+obsidian_conversation_log.txt
+
+# Eval datasets regenerate locally from the gitignored sources above - the
+# export carries the same personal transcripts, so it must never be pushed.
+tests/eval/datasets/
 
 # ── Python build noise ────────────────────────────────────────────────────────
 __pycache__/
