@@ -450,6 +450,12 @@ class HudCanvas(QWidget):
         self._auto: dict = {}
         self._auto_pulse = 0.0
 
+        # V2 perf measurement (spec §12): AETHER_HUD_PAINT=1 turns on a
+        # rolling per-frame paint timer. Measurement only — the docs must
+        # quote numbers from this, never a claimed display rate.
+        self._paint_perf = os.environ.get("AETHER_HUD_PAINT") == "1"
+        self._paint_ms_win: list[float] = []
+
         self._tick       = 0
         self._scale      = 1.0
         self._tgt_scale  = 1.0
@@ -1388,6 +1394,7 @@ class HudCanvas(QWidget):
         p = QPainter(self)
         if not p.isActive():      # device not ready (e.g. 0-size during layout) — skip cleanly
             return
+        _pf0 = time.perf_counter() if self._paint_perf else 0.0
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), qcol(C.BG))
 
@@ -1517,7 +1524,24 @@ class HudCanvas(QWidget):
                     cl = qcol(C.BORDER_B)
             p.fillRect(QRectF(wx0 + i * bw, wy + 20 - hgt, bw - 1, hgt), cl)
 
+        if self._paint_perf:
+            self._record_paint_ms((time.perf_counter() - _pf0) * 1000.0)
         p.end()   # end deterministically so the backing store never flushes an active painter
+
+    def _record_paint_ms(self, ms: float) -> None:
+        """AETHER_HUD_PAINT=1 only: rolling window, one measured log line
+        per 240 frames. Reports cost against the 60 Hz budget — it never
+        claims an achieved frame rate (spec §12: no untested FPS claims)."""
+        try:
+            w = self._paint_ms_win
+            w.append(ms)
+            if len(w) >= 240:
+                avg = sum(w) / len(w)
+                w.clear()
+                _log.info("hud paint measured: avg %.2f ms/frame over 240 "
+                          "frames (60 Hz budget = 16.67 ms)", avg)
+        except Exception:
+            pass
 
 class MetricBar(QWidget):
 

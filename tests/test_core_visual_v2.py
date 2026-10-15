@@ -342,6 +342,89 @@ class TestAutomationSeam(unittest.TestCase):
         self.assertTrue(callable(ui.HudCanvas.on_automation_event))
 
 
+class TestAudioAndPerfSeams(unittest.TestCase):
+    """Phase 7 (real audio seams only) + Phase 8 (measurement is real,
+    env-gated, and never claims a frame rate)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from PyQt6.QtWidgets import QApplication
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        import ui
+        self.hud = ui.HudCanvas("", "AUD")
+        self.hud.hud_style = "core"
+        self.addCleanup(lambda: self.hud.close())
+
+    def test_real_audio_level_reaches_paint_and_decays(self):
+        self.hud.state = "LISTENING"
+        self.hud.set_audio_level(0.8)
+        self.assertGreaterEqual(self.hud._live_amp, 0.8,
+                                "real mic level is stored unmodified")
+        for _ in range(5):
+            self.hud._step()
+        self.assertGreater(self.hud._amp_disp, 0.0,
+                           "smoothing must carry the level to the painter")
+        self.assertLessEqual(self.hud._amp_disp, 1.0)
+        # sound stopped: the effect decays — no fake sustained glow
+        self.hud._live_amp = 0.0
+        for _ in range(600):
+            self.hud._step()
+        self.assertLess(self.hud._amp_disp, 0.08,
+                        "audio-driven brightness must stop with the audio")
+
+    def test_set_audio_level_is_clamped_and_garbage_safe(self):
+        self.hud._live_amp = 0.0
+        self.hud.set_audio_level(99.0)
+        self.assertLessEqual(self.hud._live_amp, 1.0)
+        self.hud._live_amp = 0.0
+        self.hud.set_audio_level(-5.0)
+        self.assertEqual(self.hud._live_amp, 0.0)
+        for junk in ("abc", None, b"x", {"a": 1}):
+            self.hud.set_audio_level(junk)   # must not raise
+
+    def test_paint_timer_only_when_env_armed_and_logs_measured_line(self):
+        import os
+        from unittest import mock
+        import ui
+        self.assertFalse(self.hud._paint_perf,
+                         "measurement off by default (no overhead surprise)")
+        with mock.patch.dict(os.environ, {"AETHER_HUD_PAINT": "1"}):
+            h2 = ui.HudCanvas("", "ENV1")
+            try:
+                self.assertTrue(h2._paint_perf, "env arms the paint timer")
+            finally:
+                h2.close()
+        with mock.patch.dict(os.environ, {"AETHER_HUD_PAINT": ""}):
+            h3 = ui.HudCanvas("", "ENV0")
+            try:
+                self.assertFalse(h3._paint_perf, "empty env disarms")
+            finally:
+                h3.close()
+
+        # armed timer records frames, and a full window logs ONE measured
+        # line against the 60 Hz budget (never a claimed fps)
+        self.hud._paint_perf = True
+        self.assertFalse(self.hud.grab().isNull())
+        self.assertGreaterEqual(len(self.hud._paint_ms_win), 1,
+                                "armed timer must record paint frames")
+        while len(self.hud._paint_ms_win) < 239:
+            self.hud._paint_ms_win.append(1.0)
+        with self.assertLogs("aether.hud", level="INFO") as cm:
+            self.hud._record_paint_ms(2.0)
+        self.assertIn("hud paint measured", cm.output[0])
+        self.assertIn("60 Hz budget", cm.output[0])
+        self.assertEqual(self.hud._paint_ms_win, [], "window resets after log")
+
+    def test_bench_tool_exists_and_is_pure_measurement(self):
+        from pathlib import Path
+        src = Path("tools/hud_paint_bench.py").read_text(encoding="utf-8")
+        self.assertIn("16.67", src, "compares against the 60 Hz budget")
+        self.assertIn("p95", src, "reports tail latency, not just averages")
+        self.assertNotIn("assert ", src, "a bench must never assert (it measures)")
+
+
 class TestV2ReactorPaint(unittest.TestCase):
 
     @classmethod
