@@ -87,7 +87,7 @@ def _read_full_config() -> dict:
 
 # Single source of truth for the release name — the window title, the header
 # badge and the readme must never disagree again.
-APP_VERSION  = "AETHER-I"
+APP_VERSION  = "XYRIS I"
 APP_PROTOCOL = "IV"
 
 _DEFAULT_W, _DEFAULT_H = 980, 700
@@ -1809,7 +1809,7 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for AETHER-I", str(Path.home()),
+            self, "Select a file for XYRIS I", str(Path.home()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -2213,7 +2213,7 @@ class SetupOverlay(QWidget):
             return w
 
         layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure AETHER-I before first boot.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("Configure XYRIS I before first boot.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
@@ -2622,7 +2622,7 @@ class CustomizeOverlay(QWidget):
 
 
 class PersonaSelectorOverlay(QWidget):
-    """Floating overlay — select from six AETHER-I personas."""
+    """Floating overlay — select from six XYRIS I personas."""
 
     switched = pyqtSignal(str)   # persona_id
     _OW, _OH = 480, 520
@@ -3131,10 +3131,10 @@ class AudioDeviceOverlay(_HudOverlay):
             lay.addWidget(box)
             return box
 
-        self._in_box  = _row("MICROPHONE — what AETHER-I hears you with",
+        self._in_box  = _row("MICROPHONE — what XYRIS I hears you with",
                              "input", get_input_device())
         lay.addSpacing(4)
-        self._out_box = _row("SPEAKERS — what AETHER-I talks through",
+        self._out_box = _row("SPEAKERS — what XYRIS I talks through",
                              "output", get_output_device())
 
         note = QLabel("Applying reconnects the session. Your conversation is kept.")
@@ -3282,7 +3282,7 @@ class MemoryOverlay(_HudOverlay):
 
         from memory.memory_manager import all_entries_for_ui
 
-        hdr = QLabel("🧠  WHAT AETHER-I REMEMBERS")
+        hdr = QLabel("🧠  WHAT XYRIS I REMEMBERS")
         hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         self._lay.addWidget(hdr)
@@ -3875,7 +3875,7 @@ class _TasksPanel(QWidget):
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         lay.addWidget(hdr)
 
-        self._agent_lbl = QLabel("◉  AETHER-I — INITIALISING")
+        self._agent_lbl = QLabel("◉  XYRIS I — INITIALISING")
         self._agent_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         self._agent_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         lay.addWidget(self._agent_lbl)
@@ -3916,7 +3916,7 @@ class _TasksPanel(QWidget):
             col = C.GREEN
         elif col is None:
             col = C.PRI
-        self._agent_lbl.setText(f"◉  AETHER-I — {state}")
+        self._agent_lbl.setText(f"◉  XYRIS I — {state}")
         self._agent_lbl.setStyleSheet(f"color: {col}; background: transparent;")
 
     def _refresh(self):
@@ -4479,7 +4479,7 @@ class AutomationOverlay(_HudOverlay):
                 w.hide()
                 w.deleteLater()
         if not items:
-            empty = QLabel("No automations yet — ask AETHER-I to design one.")
+            empty = QLabel("No automations yet — ask XYRIS I to design one.")
             empty.setWordWrap(True)
             empty.setFont(QFont("Courier New", 7))
             empty.setStyleSheet(
@@ -4517,7 +4517,7 @@ class AutomationOverlay(_HudOverlay):
         outcomes only ever come from the run record itself."""
         if self._runner is None:
             self._info.setText(
-                "Double-tap start is not bound yet (no engine) — ask AETHER-I "
+                "Double-tap start is not bound yet (no engine) — ask XYRIS I "
                 "with action='run' instead. Nothing was started.")
             return
         try:
@@ -5113,7 +5113,7 @@ class RemoteKeyOverlay(QWidget):
         self._qr_label.setStyleSheet(
             "color: #00ff88; background: #001a0d; border-radius: 10px;"
         )
-        self._timer_lbl.setText("Phone connected — AETHER-I ready")
+        self._timer_lbl.setText("Phone connected — XYRIS I ready")
         self._timer_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
 
     def _refresh_key(self):
@@ -5185,7 +5185,7 @@ class MainWindow(QMainWindow):
         if _ui_color and _ui_color.lower() != DEFAULT_UI_COLOR:
             apply_ui_accent(_ui_color)
 
-        self.setWindowTitle(f"{_display} — {APP_VERSION}")
+        self.setWindowTitle(_display if _display == APP_VERSION else f"{_display} — {APP_VERSION}")
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.resize(_DEFAULT_W, _DEFAULT_H)
 
@@ -5456,7 +5456,7 @@ class MainWindow(QMainWindow):
             self.hide()
             self.tray_manager.show_notification(
                 self.windowTitle(),
-                f"AETHER-I is running in the background.\nPress {self.tray_manager.hotkey_label()} to restore.",
+                f"XYRIS I is running in the background.\nPress {self.tray_manager.hotkey_label()} to restore.",
             )
         else:
             event.accept()
@@ -7633,7 +7633,7 @@ class MainWindow(QMainWindow):
                               else "◉  HUD: REACTOR CORE")
         self._hud_btn.setStyleSheet(style)
         self._hud_btn.setToolTip(
-            "An animated head that speaks your words and shows what AETHER-I is "
+            "An animated head that speaks your words and shows what XYRIS I is "
             "doing. Tap to switch to the reactor core."
             if face else
             "A reactor core that turns with the state and moves with your voice. "
@@ -7912,7 +7912,7 @@ class MainWindow(QMainWindow):
         """Update all name/theme-dependent UI elements and persist to config."""
         self._assistant_name = name.strip() or "JARVIS"
         display = self._assistant_name.upper()
-        self.setWindowTitle(f"{display} — {APP_VERSION}")
+        self.setWindowTitle(display if display == APP_VERSION else f"{display} — {APP_VERSION}")
         self._title_lbl.setText(display)
         if display in ("JARVIS", "J.A.R.V.I.S"):
             self._sub_lbl.setText("Just A Rather Very Intelligent System")

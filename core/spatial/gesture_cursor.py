@@ -1,7 +1,7 @@
 """
 Gesture Cursor Overlay — Futuristic pointer for gesture interaction.
 
-Part of AETHER-I Spatial Screen Interaction Engine V1.
+Part of XYRIS I Spatial Screen Interaction Engine V1.
 """
 
 from PyQt6.QtCore import Qt, QPointF, QPropertyAnimation, QEasingCurve, pyqtSignal

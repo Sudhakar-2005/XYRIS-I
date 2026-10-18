@@ -55,9 +55,9 @@ class TestV3Shell(unittest.TestCase):
         cls.app.processEvents()
 
     def test_branding_constants(self):
-        self.assertEqual(APP_VERSION, "AETHER-I")
+        self.assertEqual(APP_VERSION, "XYRIS I")
         self.assertEqual(APP_PROTOCOL, "IV")
-        self.assertIn("AETHER-I", self.w.windowTitle())
+        self.assertIn("XYRIS I", self.w.windowTitle())
 
     def test_center_has_three_pages(self):
         self.assertEqual(self.w._pages.count(), 3)

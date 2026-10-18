@@ -1,7 +1,7 @@
 """
-Spatial Screen Interaction Engine — AETHER-I
+Spatial Screen Interaction Engine — XYRIS I
 
-Camera-based hand gesture control for the existing AETHER-I desktop UI.
+Camera-based hand gesture control for the existing XYRIS I desktop UI.
 """
 
 from core.spatial.camera_manager import CameraManager

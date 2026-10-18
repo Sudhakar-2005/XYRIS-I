@@ -1,10 +1,10 @@
 """
 Verifier Engine — Post-action verification.
 
-Part of AETHER-I Intelligence Architecture V0.1
+Part of XYRIS I Intelligence Architecture V0.1
 Phase 1: Runtime Foundation
 
-AETHER must NEVER claim success merely because an action was issued.
+XYRIS must NEVER claim success merely because an action was issued.
 Verification is a first-class intelligence capability.
 """
 

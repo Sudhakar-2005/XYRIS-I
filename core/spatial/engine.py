@@ -1,7 +1,7 @@
 """
 Spatial Interaction Engine — Main orchestrator for gesture control.
 
-Part of AETHER-I Spatial Screen Interaction Engine V1.
+Part of XYRIS I Spatial Screen Interaction Engine V1.
 """
 
 import logging

@@ -1,4 +1,4 @@
-"""Reactor visual model — pure, Qt-free logic for the AETHER-I neural core.
+"""Reactor visual model — pure, Qt-free logic for the XYRIS I neural core.
 
 Everything paint-independent lives here so state→motion mapping, the neural
 graph, particles and signals can be unit-tested without a display. ui.py

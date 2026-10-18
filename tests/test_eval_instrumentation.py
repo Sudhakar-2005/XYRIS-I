@@ -103,6 +103,7 @@ class TestDatasetExporter(unittest.TestCase):
     def test_role_mapping_and_export_counts(self):
         from tools.eval_export_datasets import export, role_of
         self.assertEqual(role_of("AETHER-I: Hello"), "assistant")
+        self.assertEqual(role_of("XYRIS I: Hello"), "assistant")
         self.assertEqual(role_of("User: Hi"), "user")
         self.assertEqual(role_of("weird"), "other")
         with tempfile.TemporaryDirectory() as td:
@@ -111,8 +112,8 @@ class TestDatasetExporter(unittest.TestCase):
             sess.mkdir()
             (sess / "a.json").write_text(json.dumps({
                 "date": "2026-01-01", "language": "English",
-                "summary": "", "turn_count": 2,
-                "turns": ["AETHER-I: ok", "User: thanks"],
+                "summary": "", "turn_count": 3,
+                "turns": ["AETHER-I: ok", "XYRIS I: welcome back", "User: thanks"],
             }), encoding="utf-8")
             mem = td / "long_term.json"
             mem.write_text(json.dumps(
@@ -121,13 +122,13 @@ class TestDatasetExporter(unittest.TestCase):
             out = td / "out"
             counts = export(sess, mem, out)
             self.assertEqual(counts["sessions"], 1)
-            self.assertEqual(counts["turns"], 2)
+            self.assertEqual(counts["turns"], 3)
             self.assertEqual(counts["facts"], 1)
             rows = [json.loads(l) for l in
                     (out / "sessions.jsonl").read_text(
                         encoding="utf-8").splitlines()]
             self.assertEqual([r["role"] for r in rows],
-                             ["assistant", "user"])
+                             ["assistant", "assistant", "user"])
             # nothing personal leaks into git: the real out dir is ignored
             self.assertTrue((out / "EXPORT_INFO.json").exists())
 

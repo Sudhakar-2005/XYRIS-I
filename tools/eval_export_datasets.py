@@ -51,7 +51,7 @@ def scrub(text: str) -> str:
 
 def role_of(turn: str) -> str:
     prefix = turn.split(":", 1)[0]
-    if prefix == "AETHER-I":
+    if prefix in ("AETHER-I", "XYRIS I"):
         return "assistant"
     if prefix == "User":
         return "user"

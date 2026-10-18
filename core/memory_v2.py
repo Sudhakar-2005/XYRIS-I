@@ -1,4 +1,4 @@
-"""Memory 2.0 system for AETHER-I.
+"""Memory 2.0 system for XYRIS I.
 
 Provides enhanced memory capabilities beyond the existing memory_manager.py,
 including episodic memory (trajectories), procedural memory (action sequences),

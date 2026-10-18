@@ -3,7 +3,7 @@ Visual Generation test matrix (Phase 16) — Phases 1-3 covered here.
 
 Phase 3 focuses: intent boundaries (positive triggers + false-positive
 guards + multilingual coverage) live in the generate_image TOOL description,
-because AETHER routes via Gemini function-calling driven by tool
+because XYRIS routes via Gemini function-calling driven by tool
 descriptions — there is no separate classifier to test.
 
 Also covers: provider abstraction contract, result-model truthfulness,

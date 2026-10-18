@@ -1,7 +1,7 @@
 """
 UI Interaction Controller — Maps gesture intents to UI actions.
 
-Part of AETHER-I Spatial Screen Interaction Engine V1.
+Part of XYRIS I Spatial Screen Interaction Engine V1.
 """
 
 import logging

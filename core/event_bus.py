@@ -1,7 +1,7 @@
 """
 Event Bus — Async message queue with priority support.
 
-Part of AETHER-I Intelligence Architecture V0.1
+Part of XYRIS I Intelligence Architecture V0.1
 Phase 1: Runtime Foundation
 """
 

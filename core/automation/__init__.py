@@ -3,7 +3,7 @@
 UNDERSTAND → DESIGN → VALIDATE → APPROVE → EXECUTE → OBSERVE → VERIFY →
 RECOVER → REMEMBER.
 
-Everything reuses the existing AETHER-I systems (tool registry, permission
+Everything reuses the existing XYRIS I systems (tool registry, permission
 ledger, confirm gate, verifier, event bus, memory) — see
 docs/automation/phase0-architecture-audit.md.
 """

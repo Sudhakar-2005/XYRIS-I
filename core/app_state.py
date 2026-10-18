@@ -1,4 +1,4 @@
-"""AETHER-I V3 — central application state machine.
+"""XYRIS I V3 — central application state machine.
 
 One source of truth for "what is the assistant doing right now". Every UI
 state string flows through :func:`transition`, which normalises legacy

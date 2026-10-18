@@ -1,4 +1,4 @@
-"""Persona Engine — Structured persona profiles for AETHER-I.
+"""Persona Engine — Structured persona profiles for XYRIS I.
 
 Each persona shares the same AI core, memory, tools, and permissions.
 Only personality, communication style, and voice differ.
@@ -46,7 +46,7 @@ class PersonaProfile:
 
 
 # ---------------------------------------------------------------------------
-# The six official AETHER-I personas
+# The six official XYRIS I personas
 # ---------------------------------------------------------------------------
 
 PERSONA_FENRIR = PersonaProfile(

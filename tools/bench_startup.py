@@ -1,4 +1,4 @@
-"""Startup benchmark for AETHER-I V3 (audit §3.19).
+"""Startup benchmark for XYRIS I V3 (audit §3.19).
 
 "Never optimize by guess" — this script produces the numbers:
 

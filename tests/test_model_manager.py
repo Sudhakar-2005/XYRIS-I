@@ -1,4 +1,4 @@
-"""AETHER-I V3 — Phase 3 ModelManager / LiveModelManager tests.
+"""XYRIS I V3 — Phase 3 ModelManager / LiveModelManager tests.
 
 Two halves: pure unit tests of core/model_manager.py (ladder order, stats,
 cooldown, session slots) and fake-provider tests that drive core/gemini.py's

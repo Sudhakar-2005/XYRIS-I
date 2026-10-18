@@ -1,14 +1,14 @@
 """
 Visual Generation Provider Abstraction — Phase 1.
 
-AETHER must NEVER be tightly coupled to a single image provider.
+XYRIS must NEVER be tightly coupled to a single image provider.
 This module defines the provider interface, the normalized result model,
 and the provider registry.  Provider-specific implementation details are
 hidden behind VisualGenerationProvider so the agent architecture never
 needs to change when the provider changes.
 
 Architecture:
-    AETHER AGENT
+    XYRIS AGENT
           ↓
     VISUAL GENERATION TOOL  (actions/generate_image.py)
           ↓

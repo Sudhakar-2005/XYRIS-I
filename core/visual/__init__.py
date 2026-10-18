@@ -1,4 +1,4 @@
-"""AETHER-I Visual Generation — provider abstraction layer."""
+"""XYRIS I Visual Generation — provider abstraction layer."""
 from __future__ import annotations
 
 from .provider import (

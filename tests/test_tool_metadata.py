@@ -1,4 +1,4 @@
-"""AETHER-I V3 — Phase 4 tool metadata + dispatcher enforcement tests.
+"""XYRIS I V3 — Phase 4 tool metadata + dispatcher enforcement tests.
 
 Three layers, matching the audit (§3.9, §3.14, §3.17):
   1. Schema validation — every TOOL dict (actions + inline) declares the six

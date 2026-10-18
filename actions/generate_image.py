@@ -1,4 +1,4 @@
-# generate_image.py — Visual Generation as a first-class AETHER tool.
+# generate_image.py — Visual Generation as a first-class XYRIS tool.
 """
 generate_image: understand → prompt → provider → verify → display → save → report.
 
@@ -540,7 +540,7 @@ def generate_image(
 def get_visual_health() -> dict:
     """Phase 18 — runtime capability discovery.
 
-    AETHER must never claim image generation if the runtime cannot do it.
+    XYRIS must never claim image generation if the runtime cannot do it.
     Cheap, offline checks only (no probe request): registration, config,
     prompt sanity, plus the most recent failure observed this session.
     """

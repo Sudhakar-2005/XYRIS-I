@@ -1,4 +1,4 @@
-"""AETHER-I V3 — Phase 2 state machine tests.
+"""XYRIS I V3 — Phase 2 state machine tests.
 
 Covers core/app_state.py (vocabulary, aliases, history, listeners,
 thread-safety) plus source-level guards that the runtime emission points
