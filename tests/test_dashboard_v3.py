@@ -59,18 +59,19 @@ class TestV3Shell(unittest.TestCase):
         self.assertEqual(APP_PROTOCOL, "IV")
         self.assertIn("AETHER-I", self.w.windowTitle())
 
-    def test_center_has_two_pages(self):
-        self.assertEqual(self.w._pages.count(), 2)
+    def test_center_has_three_pages(self):
+        self.assertEqual(self.w._pages.count(), 3)
         self.assertIs(self.w._pages.widget(0), self.w._center_split)
 
     def test_nav_entries_map_to_real_destinations(self):
         keys = set(self.w._nav_btns)
         self.assertEqual(keys, {
-            "command", "system", "automations",
+            "command", "system", "memory", "automations",
             "conversations", "activity", "settings",
         })
         self.assertEqual(self.w._nav_btns["command"]._nav_target, 0)
         self.assertEqual(self.w._nav_btns["system"]._nav_target, 1)
+        self.assertEqual(self.w._nav_btns["memory"]._nav_target, 2)
         self.assertTrue(callable(getattr(
             self.w, self.w._nav_btns["automations"]._nav_target, None)))
         self.assertTrue(callable(getattr(
@@ -128,6 +129,119 @@ class TestV3Shell(unittest.TestCase):
         self.assertIs(self.w._tabs.widget(0), self.w._feed_panel)
         self.assertIs(self.w._tabs.widget(1), self.w._log)
         self.assertIsInstance(self.w._tasks_panel, _TasksPanel)
+
+
+class TestV3MemoryPage(unittest.TestCase):
+    """Phase 5 — page 2 shows real get_memory_stats() counts; the inspector
+    is the existing MemoryOverlay (no second entry list)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+        cls.w = MainWindow("face.png")
+        cls.w.hide()
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.w._metric_tmr.stop()
+        except Exception:
+            pass
+        cls.w.deleteLater()
+        cls.app.processEvents()
+
+    def test_memory_is_page_two(self):
+        self.assertEqual(self.w._pages.count(), 3)
+        self.assertEqual(self.w._nav_btns["memory"]._nav_target, 2)
+        self.w._on_nav(self.w._nav_btns["memory"])
+        self.assertEqual(self.w._pages.currentIndex(), 2)
+        self.assertTrue(self.w._nav_btns["memory"].isChecked())
+        self.assertFalse(self.w._nav_btns["command"].isChecked())
+        self.w._on_nav(self.w._nav_btns["command"])
+
+    def test_stats_match_real_memory_manager(self):
+        from memory.memory_manager import get_memory_stats
+        self.w._refresh_mem_stats()
+        real = get_memory_stats()
+        self.assertIn(f"ENTRIES  {int(real['total'])}",
+                      self.w._mem_lbls["total"].text())
+        self.assertIn(f"SESSIONS  {int(real['sessions'])}",
+                      self.w._mem_lbls["disk"].text())
+
+    def test_empty_memory_is_explicit(self):
+        # simulate the empty store honestly: total 0 → explicit line,
+        # never a fake count
+        real_total = None
+        from memory.memory_manager import get_memory_stats
+        real_total = int(get_memory_stats()["total"])
+        if real_total == 0:
+            self.assertIn("No memories stored yet",
+                          self.w._mem_lbls["categories"].text())
+        else:
+            self.assertNotIn("No memories stored yet",
+                             self.w._mem_lbls["categories"].text())
+
+    def test_inspector_opens_existing_overlay(self):
+        self.w._open_memory_panel()
+        self.assertTrue(hasattr(self.w, "_memory_overlay"))
+        self.w._memory_overlay.hide()
+        self.w._memory_overlay.deleteLater()
+        self.app.processEvents()
+
+
+class TestV3ProviderCard(unittest.TestCase):
+    """Phase 6 — the MODEL/PROVIDER card reflects real local state only:
+    config presence, MODEL_MANAGER counters, LIVE_MODEL name. No network
+    probe, no credential, unavailable != 0."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+        cls.w = MainWindow("face.png")
+        cls.w.hide()
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.w._metric_tmr.stop()
+        except Exception:
+            pass
+        cls.w.deleteLater()
+        cls.app.processEvents()
+
+    def test_card_reflects_real_config_state(self):
+        from memory.config_manager import is_configured
+        self.w._update_provider_card()
+        text = self.w._prov_lbls["gateway"].text()
+        if is_configured():
+            self.assertIn("configured", text.lower())
+        else:
+            self.assertIn("NOT CONFIGURED", text)
+
+    def test_ladders_from_real_snapshot(self):
+        from core.model_manager import MODEL_MANAGER
+        self.w._update_provider_card()
+        text = self.w._prov_lbls["ladders"].text()
+        snap = MODEL_MANAGER.snapshot() if MODEL_MANAGER else {}
+        if not snap:
+            self.assertIn("no model calls recorded", text)
+        else:
+            short = str(next(iter(snap))).rsplit("/", 1)[-1][:20]
+            self.assertIn(short, text)
+
+    def test_live_model_is_real_constant(self):
+        from core.model_manager import LIVE_MODEL
+        self.w._update_provider_card()
+        self.assertIn(LIVE_MODEL.rsplit("/", 1)[-1],
+                      self.w._prov_lbls["live"].text())
+
+    def test_no_credential_in_card(self):
+        self.w._update_provider_card()
+        for lbl in self.w._prov_lbls.values():
+            low = lbl.text().lower()
+            self.assertNotIn("api_key", low)
+            self.assertNotIn("apikey", low)
+            self.assertNotIn("aiza", low)   # Gemini key prefix
 
 
 class TestV3CoreIntegration(unittest.TestCase):

@@ -280,6 +280,12 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
   truth + real `AutomationStore.all_runs`, empty state, no fake rows).
   Nav settings toggle bug fixed (`_toggle_drawer` needed its `checked`
   arg). Coverage: `tests/test_dashboard_v3.py` (25 tests).
-- Remaining: Phase 5 telemetry + memory page · Phase 6 provider card ·
-  Phase 7 automation center · Phase 8 voice polish · Phase 9 perf/a11y ·
-  Phase 10 regression + DoD.
+- Phase 5–6 (this checkpoint): System page telemetry confirmed on the
+  real `_SysMetrics` seam; new MEMORY page (page 2, nav entry) filled
+  from `get_memory_stats()` on demand (switch/button — no hidden timer),
+  inspector button reuses the existing `MemoryOverlay`; provider card
+  filled from `is_configured()` + `MODEL_MANAGER.snapshot()` + `LIVE_MODEL`
+  on the existing 2 s metric timer, System page only — no network probe,
+  no credential, cooling/last_error from real fields.
+- Remaining: Phase 7 automation center · Phase 8 voice polish ·
+  Phase 9 perf/a11y · Phase 10 regression + DoD.

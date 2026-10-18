@@ -55,6 +55,13 @@ except Exception:      # pragma: no cover — HUD falls back to raw strings
     WORKING_STATES = frozenset({"THINKING", "PROCESSING"})
     _state_transition = None
 
+try:
+    # V3 Phase 6: real local rung health for the provider card (never a
+    # network probe — counters only, filled from the shared MODEL_MANAGER).
+    from core.model_manager import LIVE_MODEL, MODEL_MANAGER
+except Exception:      # pragma: no cover — card shows "unavailable"
+    LIVE_MODEL, MODEL_MANAGER = "", None
+
 # Reactor paint failures are logged once and absorbed (V2 failure handling):
 # a visual bug must never reach the Qt event loop again.
 _log = logging.getLogger("aether.hud")
@@ -5261,6 +5268,7 @@ class MainWindow(QMainWindow):
         self._pages = QStackedWidget()
         self._pages.addWidget(self._center_split)          # 0 COMMAND
         self._pages.addWidget(self._build_sys_page())      # 1 SYSTEM
+        self._pages.addWidget(self._build_mem_page())      # 2 MEMORY
         body.addWidget(self._pages, stretch=5)
 
         self._right_panel = self._build_right_panel()
@@ -5983,6 +5991,15 @@ class MainWindow(QMainWindow):
             health.setText(f"CPU {cpu:.0f}% · MEM {mem:.0f}%\n"
                            f"GPU {gpu_s} · TMP {tmp_s}")
 
+        # V3 Phase 6 — provider card, same 2 s cadence, System page only
+        # (no extra timer; hidden pages cost nothing).
+        if getattr(self, "_pages", None) is not None \
+                and self._pages.currentIndex() == 1:
+            try:
+                self._update_provider_card()
+            except Exception:
+                pass
+
 
     def _build_header(self) -> QWidget:
         w = QWidget()
@@ -6154,6 +6171,7 @@ class MainWindow(QMainWindow):
         entries = [
             ("command",   "⌂", "COMMAND CENTER", 0),
             ("system",    "▤", "SYSTEM MONITOR", 1),
+            ("memory",    "◉", "MEMORY",         2),
             ("automations", "▷", "AUTOMATIONS",   "_open_automation_panel"),
             ("conversations", "☰", "CONVERSATIONS", "_open_history_panel"),
             ("activity",  "◈", "ACTIVITY",       "_open_activity_panel"),
@@ -6181,7 +6199,7 @@ class MainWindow(QMainWindow):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setToolTip(label.title())
             b.setStyleSheet(_btn_qss)
-            b.setCheckable(key in ("command", "system"))
+            b.setCheckable(key in ("command", "system", "memory"))
             b._nav_key, b._nav_glyph, b._nav_label, b._nav_target = (
                 key, glyph, label, target)
             b.clicked.connect(lambda _=False, bb=b: self._on_nav(bb))
@@ -6222,8 +6240,13 @@ class MainWindow(QMainWindow):
         target = btn._nav_target
         if isinstance(target, int):
             self._pages.setCurrentIndex(target)
-            for key in ("command", "system"):
+            for key in ("command", "system", "memory"):
                 self._nav_btns[key].setChecked(key == btn._nav_key)
+            if btn._nav_key == "memory":
+                try:
+                    self._refresh_mem_stats()
+                except Exception:
+                    pass
             if not self._nav_collapsed and self._nav_auto is False:
                 pass
         else:
@@ -6315,6 +6338,111 @@ class MainWindow(QMainWindow):
         lay.addStretch()
         return w
 
+    def _build_mem_page(self) -> QWidget:
+        """V3 page 2 — MEMORY: real get_memory_stats() counts (design matrix
+        §G: counts only; the entry inspector is the existing MemoryOverlay,
+        opened from this page). No entries are loaded here — that surface
+        already exists and must not be duplicated."""
+        w = QWidget()
+        w.setStyleSheet(f"background: {C.BG};")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+
+        hdr = QLabel("◈  MEMORY")
+        hdr.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
+                          f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 6px;")
+        lay.addWidget(hdr)
+
+        card = QWidget()
+        card.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER};"
+                           f" border-radius: 6px;")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(12, 10, 12, 10)
+        cl.setSpacing(6)
+
+        self._mem_lbls: dict[str, QLabel] = {}
+        for key in ("total", "categories", "span", "disk"):
+            row = QLabel("…")
+            row.setFont(QFont("Courier New", 8))
+            row.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+            row.setWordWrap(True)
+            cl.addWidget(row)
+            self._mem_lbls[key] = row
+        lay.addWidget(card)
+
+        btns = QHBoxLayout()
+        btns.setSpacing(8)
+        inspect = QPushButton("OPEN MEMORY INSPECTOR")
+        inspect.setFixedHeight(28)
+        inspect.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        inspect.setCursor(Qt.CursorShape.PointingHandCursor)
+        inspect.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.PRI};
+                border: 1px solid {C.PRI_DIM}; border-radius: 3px; }}
+            QPushButton:hover {{ background: {C.PRI_GHO}; border-color: {C.PRI}; }}
+        """)
+        inspect.clicked.connect(self._open_memory_panel)
+        btns.addWidget(inspect)
+
+        refresh = QPushButton("REFRESH")
+        refresh.setFixedHeight(28)
+        refresh.setFont(QFont("Courier New", 8))
+        refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.TEXT_MED};
+                border: 1px solid {C.BORDER}; border-radius: 3px; }}
+            QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI_DIM}; }}
+        """)
+        refresh.clicked.connect(self._refresh_mem_stats)
+        btns.addWidget(refresh)
+        btns.addStretch()
+        lay.addLayout(btns)
+
+        lay.addStretch()
+        self._refresh_mem_stats()
+        return w
+
+    def _refresh_mem_stats(self):
+        """Fill the memory page from get_memory_stats() — one JSON read on
+        demand (page switch / button), never a hidden timer."""
+        lbls = getattr(self, "_mem_lbls", None)
+        if not lbls:
+            return
+        try:
+            from memory.memory_manager import get_memory_stats
+            st = get_memory_stats()
+        except Exception:
+            st = None
+        if st is None:
+            for lbl in lbls.values():
+                lbl.setText("memory statistics unavailable")
+                lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            return
+        total     = int(st.get("total") or 0)
+        by_cat    = st.get("by_category") or {}
+        sessions  = int(st.get("sessions") or 0)
+        size      = int(st.get("size_bytes") or 0)
+        oldest    = str(st.get("oldest") or "")
+        newest    = str(st.get("newest") or "")
+
+        lbls["total"].setText(f"ENTRIES  {total}")
+        lbls["total"].setStyleSheet(f"color: {C.GREEN if total else C.TEXT_DIM};"
+                                    f" background: transparent;")
+        if total == 0:
+            lbls["categories"].setText("No memories stored yet")
+            lbls["span"].setText("OLDEST  —   NEWEST  —")
+        else:
+            cats = "  ·  ".join(
+                f"{k}: {v}" for k, v in sorted(by_cat.items(),
+                                               key=lambda kv: -kv[1]) if v)
+            lbls["categories"].setText(cats or "—")
+            lbls["span"].setText(
+                f"OLDEST  {oldest or '—'}   NEWEST  {newest or '—'}")
+        lbls["disk"].setText(f"ON DISK  {size / 1024:.1f} KB   "
+                             f"SESSIONS  {sessions}")
+
     def _build_provider_card(self) -> QWidget:
         """MODEL/PROVIDER STATUS — local truth only: configured? cooling?
         last error? (core.model_manager snapshot). Never a network probe,
@@ -6340,6 +6468,59 @@ class MainWindow(QMainWindow):
             l.addWidget(row)
             self._prov_lbls[key] = row
         return card
+
+    def _update_provider_card(self):
+        """V3 Phase 6 — fill the MODEL/PROVIDER card from real local state:
+        config presence, MODEL_MANAGER rung counters, the configured live
+        model name. Never a network probe; cooling/last_error come straight
+        from the shared manager's snapshot. Called from the existing 2 s
+        metric timer only while the System page is on screen."""
+        lbls = getattr(self, "_prov_lbls", None)
+        if not lbls:
+            return
+        try:
+            from memory.config_manager import is_configured
+            ok_cfg = bool(is_configured())
+        except Exception:
+            ok_cfg = False
+        lbls["gateway"].setText(
+            "GATEWAY  configured (local key present)" if ok_cfg
+            else "GATEWAY  NOT CONFIGURED")
+        lbls["gateway"].setStyleSheet(
+            f"color: {C.GREEN if ok_cfg else C.RED}; background: transparent;")
+
+        snap: dict = MODEL_MANAGER.snapshot() if MODEL_MANAGER is not None else {}
+        if not snap:
+            lbls["ladders"].setText("LADDERS  no model calls recorded yet")
+            lbls["ladders"].setStyleSheet(
+                f"color: {C.TEXT_DIM}; background: transparent;")
+        else:
+            cooling_any = False
+            parts: list[str] = []
+            for model, s in list(snap.items())[:4]:
+                short = str(model).rsplit("/", 1)[-1][:20]
+                att, ok = int(s.get("attempts", 0)), int(s.get("ok", 0))
+                avg = float(s.get("avg_latency", 0.0) or 0.0)
+                cool = bool(s.get("cooling"))
+                cooling_any = cooling_any or cool
+                parts.append(f"{short}  {ok}/{att}  avg {avg:.1f}s"
+                             + ("  COOLING" if cool else ""))
+            lbls["ladders"].setText("LADDERS\n  " + "\n  ".join(parts))
+            lbls["ladders"].setStyleSheet(
+                f"color: {C.ACC2 if cooling_any else C.TEXT_MED};"
+                f" background: transparent;")
+
+        live = LIVE_MODEL.rsplit("/", 1)[-1] if LIVE_MODEL else "—"
+        err = ""
+        for s in snap.values():
+            if s.get("last_error"):
+                err = str(s["last_error"])[:60]
+                break
+        lbls["live"].setText(f"LIVE  {live}" + (f"\n  last error: {err}" if err
+                                                else ""))
+        lbls["live"].setStyleSheet(
+            f"color: {C.RED if err else C.PRI}; background: transparent;")
+
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         w.setFixedWidth(_RIGHT_W)
