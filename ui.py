@@ -34,7 +34,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
-    QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
+    QStackedWidget, QTabWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar,
 )
 
 try:
@@ -3737,6 +3737,211 @@ class ActivityOverlay(_HudOverlay):
         self._empty.setVisible(True)
 
 
+class _FeedPanel(QWidget):
+    """V3 §7 — right-rail activity feed.
+
+    Reads the SAME core.activity.ActivityFeed the overlay uses, with its own
+    seq cursor: drain_since() is per-consumer by design, so panel and overlay
+    never eat each other's rows. User-facing rows only (the feed's one-line
+    summaries) — raw debug text stays in the LOG tab. Bounded to _MAX_ROWS
+    labels; timer runs only while the widget is on screen.
+    """
+
+    _MAX_ROWS = 60
+
+    def __init__(self, win=None, parent=None):
+        super().__init__(parent)
+        self._win = win
+        self._feed = None
+        self._cursor = 0
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        self._rows = QVBoxLayout(inner)
+        self._rows.setContentsMargins(2, 2, 2, 2)
+        self._rows.setSpacing(2)
+        self._rows.addStretch(1)
+        self._scroll.setWidget(inner)
+        outer.addWidget(self._scroll, 1)
+
+        self._empty = QLabel("No activity yet — events appear as they happen")
+        self._empty.setFont(QFont("Courier New", 7))
+        self._empty.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(self._empty)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(1500)
+        self._timer.timeout.connect(self._pull)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._pull()
+        self._timer.start()
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
+
+    def _pull(self):
+        if self._feed is None:
+            self._feed = getattr(self._win, "_activity_feed", None)
+            if self._feed is None:
+                return
+        try:
+            rows = self._feed.drain_since(self._cursor)
+        except Exception:
+            return
+        for row in rows:
+            try:
+                self._cursor = max(self._cursor, int(row.get("seq", 0)))
+                self._add_row(row)
+            except Exception:
+                continue
+        # hard bound: keep only the newest _MAX_ROWS labels
+        while self._rows.count() - 1 > self._MAX_ROWS:
+            it = self._rows.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        self._empty.setVisible(self._rows.count() <= 1)
+
+    def _add_row(self, row: dict):
+        rtype = str(row.get("type") or "")
+        if row.get("critical") or rtype in ("tool_error", "system_error",
+                                            "user_interrupt"):
+            color = C.RED
+        elif rtype == "tool_result":
+            color = C.GREEN
+        elif rtype == "system_startup":
+            color = C.PRI
+        else:
+            color = C.TEXT_MED
+        lbl = QLabel(f"{row.get('time', '')}  {row.get('text', '')}")
+        lbl.setWordWrap(True)
+        lbl.setFont(QFont("Courier New", 7))
+        lbl.setStyleSheet(f"color: {color}; background: transparent;")
+        self._rows.insertWidget(self._rows.count() - 1, lbl)
+
+
+class _TasksPanel(QWidget):
+    """V3 §8 — agent & task panel.
+
+    The truth, stated plainly: one assistant runtime (this app), and the only
+    real task list it has — automation runs from the store. Statuses are the
+    persisted RunStatus strings; there are no other agents to invent. Empty
+    store ⇒ explicit empty state, never placeholder rows.
+    """
+
+    _ACTIVE = ("RUNNING", "WAITING_APPROVAL", "PAUSED")
+
+    def __init__(self, win=None, parent=None):
+        super().__init__(parent)
+        self._win = win
+        self.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER};"
+                           f" border-radius: 6px;")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 6, 10, 6)
+        lay.setSpacing(2)
+
+        hdr = QLabel("◈  AGENT & TASKS")
+        hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        lay.addWidget(hdr)
+
+        self._agent_lbl = QLabel("◉  AETHER-I — INITIALISING")
+        self._agent_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._agent_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        lay.addWidget(self._agent_lbl)
+        _note = QLabel("Single assistant runtime")
+        _note.setFont(QFont("Courier New", 6))
+        _note.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(_note)
+
+        self._task_rows = QVBoxLayout()
+        self._task_rows.setSpacing(1)
+        lay.addLayout(self._task_rows)
+
+        self._empty = QLabel("No active tasks")
+        self._empty.setFont(QFont("Courier New", 7))
+        self._empty.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(self._empty)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(2500)      # same cadence as the overlay poll
+        self._timer.timeout.connect(self._refresh)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._refresh()
+        self._timer.start()
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
+
+    def set_state(self, state: str):
+        col = {"ERROR": C.RED, "WAITING_CONFIRMATION": C.ACC,
+               "RECOVERING": C.ACC}.get(state)
+        if col is None and state in ("EXECUTING", "PLANNING", "VERIFYING",
+                                     "THINKING", "UNDERSTANDING", "OBSERVING"):
+            col = C.ACC2
+        elif col is None and state == "LISTENING":
+            col = C.GREEN
+        elif col is None:
+            col = C.PRI
+        self._agent_lbl.setText(f"◉  AETHER-I — {state}")
+        self._agent_lbl.setStyleSheet(f"color: {col}; background: transparent;")
+
+    def _refresh(self):
+        while self._task_rows.count():
+            it = self._task_rows.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        store = getattr(self._win, "_automation_store", None)
+        runs: list[dict] = []
+        if store is not None:
+            try:
+                runs = store.all_runs(30) or []
+            except Exception:
+                runs = []
+        active = [r for r in runs
+                  if str(r.get("status") or "") in self._ACTIVE][:3]
+        recent = [r for r in runs if r not in active][:3]
+        for r in active + recent:
+            self._task_rows.addWidget(self._row(r))
+        self._empty.setVisible(not (active or recent))
+
+    @staticmethod
+    def _row(r: dict) -> QLabel:
+        status = str(r.get("status") or "?")
+        color = (C.GREEN if status == "COMPLETED" else
+                 C.RED if status in ("FAILED", "CANCELLED") else
+                 C.ACC if status == "PAUSED" else
+                 C.ACC2 if status == "WAITING_APPROVAL" else
+                 C.PRI if status == "RUNNING" else C.TEXT_MED)
+        run_id = str(r.get("run_id") or "")[-8:]
+        trig = str(r.get("trigger") or "")
+        mark = "▶" if status in ("RUNNING", "WAITING_APPROVAL") else "·"
+        lbl = QLabel(f"{mark} {status}  #{run_id}  {trig}".rstrip())
+        lbl.setFont(QFont("Courier New", 7))
+        lbl.setStyleSheet(f"color: {color}; background: transparent;")
+        lbl.setToolTip(f"workflow {r.get('workflow_id')}  "
+                       f"error: {r.get('error') or '—'}")
+        return lbl
+
+
 # ── Automation V0.1 (Phase 10) ─────────────────────────────────────────────
 # Read-only inspection: the model CREATES and RUNS automations; this panel
 # only shows what the store holds — list, layered graph, recent runs.
@@ -6024,7 +6229,13 @@ class MainWindow(QMainWindow):
         else:
             opener = getattr(self, target, None)
             if opener:
-                opener()
+                if target == "_toggle_drawer":
+                    # checkable-toggle legacy: mirror the button semantics
+                    drawer = getattr(self, "_quick_drawer", None)
+                    vis = drawer is not None and drawer.isVisible()
+                    opener(not vis)
+                else:
+                    opener()
 
     def _set_nav_collapsed(self, collapsed: bool):
         if getattr(self, "_nav_collapsed", None) == collapsed:
@@ -6143,9 +6354,34 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
             return l
 
-        lay.addWidget(_sec("ACTIVITY LOG"))
+        # V3 §7/§3: tabbed intelligence surface — ACTIVITY = the structured
+        # user-facing feed (real bus events), LOG = the existing free-text
+        # echo surface (preserved, not removed).
+        self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        self._feed_panel = _FeedPanel(win=self)
+        self._tabs.addTab(self._feed_panel, "ACTIVITY")
         self._log = LogWidget()
-        lay.addWidget(self._log, stretch=1)
+        self._tabs.addTab(self._log, "LOG")
+        self._tabs.tabBar().setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
+                border: 1px solid {C.BORDER}; background: transparent;
+                top: -1px;
+            }}
+            QTabBar::tab {{
+                background: transparent; color: {C.TEXT_DIM};
+                padding: 3px 12px; border: none;
+            }}
+            QTabBar::tab:selected {{ color: {C.PRI}; border-bottom: 1px solid {C.PRI}; }}
+            QTabBar::tab:hover {{ color: {C.PRI}; }}
+        """)
+        lay.addWidget(self._tabs, stretch=1)
+
+        # V3 §8: agent & task visibility (single runtime + real runs only)
+        self._tasks_panel = _TasksPanel(win=self)
+        self._tasks_panel.setMaximumHeight(124)
+        lay.addWidget(self._tasks_panel)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
@@ -7706,6 +7942,12 @@ class MainWindow(QMainWindow):
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
         self._update_state_chip(state)
+        tasks = getattr(self, "_tasks_panel", None)
+        if tasks is not None:
+            try:
+                tasks.set_state(state)
+            except Exception:
+                pass
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False

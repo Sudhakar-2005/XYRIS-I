@@ -265,3 +265,21 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
 - Model status is local-config + local-run health; it never probes the API
   (cost/latency) so "connected" is claimed only when a live session flag
   exists.
+
+## Phase progress (living)
+
+- Phase 0–1 (b77b1a0): audit + this design.
+- Phase 2 (6bee183): shell — nav rail, center stack (page 0 = existing
+  HudCanvas untouched, page 1 = System Monitor), top-bar state chip +
+  health strip, AETHER-I branding sweep, responsive collapse.
+- Phase 3–4 (this checkpoint): core verified in page 0 (chip ↔ HUD single
+  sink via `_apply_state`, `_auto_sig` band seam intact); right rail now
+  tabbed ACTIVITY (`_FeedPanel`, own-cursor `drain_since` on the shared
+  ring, visible-only 1.5 s timer, bounded 60 rows) + LOG (existing
+  `LogWidget`, preserved); `AGENTS & TASKS` (`_TasksPanel`, single-runtime
+  truth + real `AutomationStore.all_runs`, empty state, no fake rows).
+  Nav settings toggle bug fixed (`_toggle_drawer` needed its `checked`
+  arg). Coverage: `tests/test_dashboard_v3.py` (25 tests).
+- Remaining: Phase 5 telemetry + memory page · Phase 6 provider card ·
+  Phase 7 automation center · Phase 8 voice polish · Phase 9 perf/a11y ·
+  Phase 10 regression + DoD.
