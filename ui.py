@@ -3807,6 +3807,16 @@ class _FeedPanel(QWidget):
             rows = self._feed.drain_since(self._cursor)
         except Exception:
             return
+        # first-open backlog: only the newest _MAX_ROWS can survive the
+        # bound below — advance the cursor past the rest without ever
+        # building labels we would delete in the same call (V3 Phase 9).
+        if len(rows) > self._MAX_ROWS:
+            for row in rows[:-self._MAX_ROWS]:
+                try:
+                    self._cursor = max(self._cursor, int(row.get("seq", 0)))
+                except Exception:
+                    continue
+            rows = rows[-self._MAX_ROWS:]
         for row in rows:
             try:
                 self._cursor = max(self._cursor, int(row.get("seq", 0)))

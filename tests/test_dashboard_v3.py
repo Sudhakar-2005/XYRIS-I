@@ -578,5 +578,153 @@ class TestV3TasksPanel(unittest.TestCase):
         self.assertFalse(self.panel._empty.isHidden())
 
 
+class TestV3A11y(unittest.TestCase):
+    """Phase 9 — contrast of the real tokens (WCAG 2.1), focusability,
+    reduced-motion safety (no property animations), and single-timer
+    discipline for the V3 panels."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+        cls.w = MainWindow("face.png")
+        cls.w.hide()
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.w._metric_tmr.stop()
+        except Exception:
+            pass
+        cls.w.deleteLater()
+        cls.app.processEvents()
+
+    @staticmethod
+    def _contrast(a: str, b: str) -> float:
+        def _lum(hx):
+            h = hx.lstrip("#")
+            r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+            f = (lambda c: c / 12.92 if c <= 0.03928
+                 else ((c + 0.055) / 1.055) ** 2.4)
+            r, g, b = f(r), f(g), f(b)
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b
+        la, lb = _lum(a), _lum(b)
+        hi, lo = max(la, lb), min(la, lb)
+        return (hi + 0.05) / (lo + 0.05)
+
+    def test_token_contrast_meets_aa(self):
+        pairs = [
+            (C.TEXT, C.BG), (C.TEXT_MED, C.BG), (C.TEXT_MED, C.PANEL2),
+            (C.TEXT_DIM, C.BG), (C.TEXT_DIM, C.PANEL2), (C.PRI, C.DARK),
+            (C.GREEN, C.PANEL2), (C.RED, C.PANEL2), (C.ACC2, C.PANEL2),
+            (C.ACC, C.PANEL2), (C.MUTED_C, C.BG), (C.WHITE, C.PANEL),
+        ]
+        for fg, bg in pairs:
+            r = self._contrast(fg, bg)
+            self.assertGreaterEqual(
+                r, 4.5, f"{fg} on {bg} is {r:.2f}:1 (< AA small text)")
+
+    def test_nav_buttons_are_focusable(self):
+        from PyQt6.QtCore import Qt
+        for key, b in self.w._nav_btns.items():
+            self.assertNotEqual(
+                b.focusPolicy(), Qt.FocusPolicy.NoFocus, key)
+
+    def test_v3_panels_have_no_property_animations(self):
+        from PyQt6.QtCore import QPropertyAnimation
+        for w in (self.w._feed_panel, self.w._tasks_panel):
+            self.assertEqual(w.findChildren(QPropertyAnimation), [])
+
+    def test_single_timer_per_v3_panel(self):
+        from PyQt6.QtCore import QTimer
+        self.assertEqual(len(self.w._feed_panel.findChildren(QTimer)), 1)
+        self.assertEqual(len(self.w._tasks_panel.findChildren(QTimer)), 1)
+        self.assertEqual(self.w._feed_panel._timer.interval(), 1500)
+        self.assertEqual(self.w._tasks_panel._timer.interval(), 2500)
+        # the metric seam stays singular — no duplicate collector
+        self.assertEqual(self.w._metric_tmr.interval(), 2000)
+        self.assertEqual(len(
+            [t for t in self.w.findChildren(QTimer)
+             if t.interval() == 2000 and t is not self.w._metric_tmr]), 0)
+
+    def test_timers_start_on_show_and_stop_on_hide(self):
+        # real visibility chain: panel showEvents only fire once ancestors
+        # are on screen (same as production, where the window is shown)
+        self.w.show()
+        self.app.processEvents()
+        fp, tp = self.w._feed_panel, self.w._tasks_panel
+        self.assertTrue(fp._timer.isActive())
+        self.assertTrue(tp._timer.isActive())
+        fp.hide()
+        tp.hide()
+        self.app.processEvents()
+        self.assertFalse(fp._timer.isActive())
+        self.assertFalse(tp._timer.isActive())
+        self.w.hide()
+
+
+class TestV3PerfSmoke(unittest.TestCase):
+    """Phase 9 — generous regression guards on the measured surfaces (the
+    precise numbers live in tools/v3_perf_bench.py + the design doc; these
+    bounds only catch pathological regressions, they are not benchmarks)."""
+
+    _BUDGET_MS = 30.0   # ~2 frames at 60 Hz — deliberate slack for CI noise
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+        cls.w = MainWindow("face.png")
+        cls.w.hide()
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.w._metric_tmr.stop()
+        except Exception:
+            pass
+        cls.w.deleteLater()
+        cls.app.processEvents()
+
+    def _avg(self, fn, iters=30) -> float:
+        import time as _t
+        fn()
+        t0 = _t.perf_counter()
+        for _ in range(iters):
+            fn()
+        return (_t.perf_counter() - t0) * 1000.0 / iters
+
+    def test_surface_ticks_stay_within_frame(self):
+        checks = {
+            "nav switch": lambda: self.w._on_nav(self.w._nav_btns["system"]),
+            "metric tick": self.w._update_metrics,
+            "mem stats": self.w._refresh_mem_stats,
+            "provider card": self.w._update_provider_card,
+            "state sink": lambda: self.w._apply_state("EXECUTING"),
+            "tasks refresh": self.w._tasks_panel._refresh,
+        }
+        for label, fn in checks.items():
+            avg = self._avg(fn)
+            self.assertLess(avg, self._BUDGET_MS,
+                            f"{label} avg {avg:.3f} ms")
+
+    def test_feed_pull_steady_state_within_frame(self):
+        from core.activity import ActivityFeed
+        feed = ActivityFeed()
+        panel = self.w._feed_panel
+        panel._feed = feed
+        panel._cursor = 0
+        n = [0]
+
+        def tick():
+            n[0] += 1
+            feed.append({"event_type": "custom", "source": "s",
+                         "data": {"kind": "note"}, "timestamp": float(n[0]),
+                         "priority": 20})
+            panel._pull()
+        avg = self._avg(tick, 50)
+        self.assertLess(avg, self._BUDGET_MS, f"feed steady {avg:.3f} ms")
+        panel._feed = None
+        panel._cursor = 0
+
+
 if __name__ == "__main__":
     unittest.main()

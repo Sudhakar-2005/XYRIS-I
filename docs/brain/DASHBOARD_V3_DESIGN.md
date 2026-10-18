@@ -295,4 +295,26 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
   `_apply_state` sink (no new timer), mic/mute text + chip verified
   end-to-end incl. the JarvisUI `muted` property setter used by the
   dashboard emergency-stop path.
-- Remaining: Phase 9 perf/a11y · Phase 10 regression + DoD.
+- Phase 9 (this checkpoint): measured perf (`tools/v3_perf_bench.py`,
+  offscreen, this machine — real numbers, rerun to reproduce):
+
+  | surface | avg ms | p95 ms |
+  |---|---|---|
+  | nav page switch | 0.001 | 0.001 |
+  | metric tick | 0.042 | 0.049 |
+  | memory stats | 0.300 | 0.572 |
+  | provider card | 0.216 | 0.443 |
+  | state sink | 0.013 | 0.022 |
+  | feed pull, 100-row backlog (first open) | 4.671 | 6.632 |
+  | feed pull, steady state (1 new row) | 0.116 | 0.180 |
+  | tasks refresh, 30 runs | 0.409 | 0.806 |
+
+  All p95s inside the 16.67 ms frame budget (the first-open backlog was
+  11.5/20.5 ms before skipping labels the bound would delete same-call).
+  a11y: all 12 token pairs ≥ 4.5:1 (WCAG AA small text, table in the
+  tool), nav buttons focusable, zero property animations in the V3
+  panels (reduced-motion safe), one QTimer per panel with visible-gated
+  start/stop, no duplicate metric collector. Suite guards:
+  `TestV3A11y`, `TestV3PerfSmoke` (30 ms regression slack — the precise
+  numbers live in the tool, not in asserts).
+- Remaining: Phase 10 regression + DoD.
