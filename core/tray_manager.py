@@ -73,13 +73,13 @@ class TrayManager(QObject):
 
         menu.addSeparator()
 
-        quit_action = QAction("Quit JARVIS", menu)
+        quit_action = QAction("Quit AETHER-I", menu)
         quit_action.triggered.connect(self._quit)
         menu.addAction(quit_action)
 
         self._tray.setContextMenu(menu)
         self._tray.activated.connect(self._on_activated)
-        self._tray.setToolTip("JARVIS — Mark LIV  (Ctrl+Alt+J to open)")
+        self._tray.setToolTip("AETHER-I  (Ctrl+Alt+J to open)")
         self._tray.show()
 
         # Start the global open hotkey — callback emits a signal so the

@@ -80,13 +80,15 @@ def _read_full_config() -> dict:
 
 # Single source of truth for the release name — the window title, the header
 # badge and the readme must never disagree again.
-APP_VERSION  = "MARK LIV"
-APP_PROTOCOL = APP_VERSION.split()[-1]
+APP_VERSION  = "AETHER-I"
+APP_PROTOCOL = "IV"
 
 _DEFAULT_W, _DEFAULT_H = 980, 700
 _MIN_W,     _MIN_H     = 820, 580
 _LEFT_W  = 148
 _RIGHT_W = 340
+_NAV_W   = 176         # V3 navigation rail (expanded)
+_NAV_W_SM = 48         # V3 navigation rail (collapsed: glyphs only)
 
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
@@ -1800,7 +1802,7 @@ class FileDropZone(QWidget):
 
     def _browse(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for JARVIS", str(Path.home()),
+            self, "Select a file for AETHER-I", str(Path.home()),
             "All Files (*.*);;"
             "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
             "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
@@ -2204,7 +2206,7 @@ class SetupOverlay(QWidget):
             return w
 
         layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure J.A.R.V.I.S. before first boot.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl("Configure AETHER-I before first boot.", 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
@@ -3122,10 +3124,10 @@ class AudioDeviceOverlay(_HudOverlay):
             lay.addWidget(box)
             return box
 
-        self._in_box  = _row("MICROPHONE — what JARVIS hears you with",
+        self._in_box  = _row("MICROPHONE — what AETHER-I hears you with",
                              "input", get_input_device())
         lay.addSpacing(4)
-        self._out_box = _row("SPEAKERS — what JARVIS talks through",
+        self._out_box = _row("SPEAKERS — what AETHER-I talks through",
                              "output", get_output_device())
 
         note = QLabel("Applying reconnects the session. Your conversation is kept.")
@@ -3273,7 +3275,7 @@ class MemoryOverlay(_HudOverlay):
 
         from memory.memory_manager import all_entries_for_ui
 
-        hdr = QLabel("🧠  WHAT JARVIS REMEMBERS")
+        hdr = QLabel("🧠  WHAT AETHER-I REMEMBERS")
         hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         self._lay.addWidget(hdr)
@@ -4228,7 +4230,7 @@ class AutomationOverlay(_HudOverlay):
                 w.hide()
                 w.deleteLater()
         if not items:
-            empty = QLabel("No automations yet — ask JARVIS to design one.")
+            empty = QLabel("No automations yet — ask AETHER-I to design one.")
             empty.setWordWrap(True)
             empty.setFont(QFont("Courier New", 7))
             empty.setStyleSheet(
@@ -4266,7 +4268,7 @@ class AutomationOverlay(_HudOverlay):
         outcomes only ever come from the run record itself."""
         if self._runner is None:
             self._info.setText(
-                "Double-tap start is not bound yet (no engine) — ask JARVIS "
+                "Double-tap start is not bound yet (no engine) — ask AETHER-I "
                 "with action='run' instead. Nothing was started.")
             return
         try:
@@ -4862,7 +4864,7 @@ class RemoteKeyOverlay(QWidget):
         self._qr_label.setStyleSheet(
             "color: #00ff88; background: #001a0d; border-radius: 10px;"
         )
-        self._timer_lbl.setText("Phone connected — JARVIS ready")
+        self._timer_lbl.setText("Phone connected — AETHER-I ready")
         self._timer_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
 
     def _refresh_key(self):
@@ -4979,7 +4981,10 @@ class MainWindow(QMainWindow):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
-        self._left_panel = self._build_left_panel()
+        # V3: left column is the navigation rail (the old sys-monitor panel
+        # moved to the System Monitor page — same MetricBar widgets, same
+        # _SysMetrics sampler, same 2 s timer: no duplicate collection).
+        self._left_panel = self._build_nav_rail()
         body.addWidget(self._left_panel, stretch=0)
 
         # Center column: HUD + resizable content panel via QSplitter
@@ -5043,7 +5048,15 @@ class MainWindow(QMainWindow):
         self._center_split.setStretchFactor(0, 3)
         self._center_split.setStretchFactor(1, 1)
         self._center_split.setCollapsible(0, False)
-        body.addWidget(self._center_split, stretch=5)
+
+        # V3 center pages: 0 = Command Center (the HUD stack above, untouched),
+        # 1 = System Monitor (real _SysMetrics + uptime/proc). More pages are
+        # appended by later phases — nav entries only exist once their page
+        # does, so nothing in the rail can ever point at a missing view.
+        self._pages = QStackedWidget()
+        self._pages.addWidget(self._center_split)          # 0 COMMAND
+        self._pages.addWidget(self._build_sys_page())      # 1 SYSTEM
+        body.addWidget(self._pages, stretch=5)
 
         self._right_panel = self._build_right_panel()
         body.addWidget(self._right_panel, stretch=0)
@@ -5192,7 +5205,7 @@ class MainWindow(QMainWindow):
             self.hide()
             self.tray_manager.show_notification(
                 self.windowTitle(),
-                f"JARVIS is running in the background.\nPress {self.tray_manager.hotkey_label()} to restore.",
+                f"AETHER-I is running in the background.\nPress {self.tray_manager.hotkey_label()} to restore.",
             )
         else:
             event.accept()
@@ -5697,6 +5710,16 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_quick_drawer') and self._quick_drawer.isVisible():
             self._position_quick_drawer()
 
+        # V3 responsive shell — below 900 px: nav rail auto-collapses and the
+        # header health strip hides (a manual collapse/expand override wins
+        # until the window crosses back for the first time in the session).
+        if hasattr(self, "_nav_btns"):
+            narrow = self.width() < 900
+            if getattr(self, "_nav_auto", True):
+                self._set_nav_collapsed(narrow)
+            if hasattr(self, "_health_lbl"):
+                self._health_lbl.setVisible(not narrow)
+
     def _update_metrics(self):
         snap = _metrics.snapshot()
 
@@ -5747,6 +5770,14 @@ class MainWindow(QMainWindow):
         except Exception:
             self._proc_lbl.setText("PROC  --")
 
+        # V3 header health strip — same snapshot, unavailable != 0
+        health = getattr(self, "_health_lbl", None)
+        if health is not None:
+            gpu_s = f"{gpu:.0f}%" if gpu >= 0 else "N/A"
+            tmp_s = f"{tmp:.0f}°C" if tmp >= 0 else "N/A"
+            health.setText(f"CPU {cpu:.0f}% · MEM {mem:.0f}%\n"
+                           f"GPU {gpu_s} · TMP {tmp_s}")
+
 
     def _build_header(self) -> QWidget:
         w = QWidget()
@@ -5755,14 +5786,19 @@ class MainWindow(QMainWindow):
         lay = QHBoxLayout(w)
         lay.setContentsMargins(16, 0, 16, 0)
 
-        def _badge(txt, color=C.TEXT_MED):
-            l = QLabel(txt)
-            l.setFont(QFont("Courier New", 8))
-            l.setStyleSheet(f"color: {color}; background: transparent;")
-            return l
+        # ── left cluster: wordmark · settings · state chip · health ──
+        wm_col = QVBoxLayout(); wm_col.setSpacing(0)
+        _wm = QLabel(APP_VERSION)
+        _wm.setFont(QFont("Courier New", 13, QFont.Weight.Bold))
+        _wm.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        wm_col.addWidget(_wm)
+        _wm_sub = QLabel("INTELLIGENCE COMMAND CENTER")
+        _wm_sub.setFont(QFont("Courier New", 5))
+        _wm_sub.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
+        wm_col.addWidget(_wm_sub)
+        lay.addLayout(wm_col)
+        lay.addSpacing(10)
 
-        lay.addWidget(_badge(APP_VERSION, C.PRI_DIM))
-        lay.addSpacing(8)
         self._drawer_btn = QPushButton("⚙")
         self._drawer_btn.setFixedSize(26, 26)
         self._drawer_btn.setFont(QFont("Courier New", 11))
@@ -5779,6 +5815,30 @@ class MainWindow(QMainWindow):
         self._drawer_btn.setCheckable(True)
         self._drawer_btn.clicked.connect(self._toggle_drawer)
         lay.addWidget(self._drawer_btn)
+        lay.addSpacing(8)
+
+        # Real state chip — fed only by the _apply_state seam (never a
+        # decorative status). Colour mirrors HudCanvas._state_accent so the
+        # header and the core can never disagree; the state word is always
+        # present, so status is never colour-only.
+        self._state_chip = QLabel("● INITIALISING")
+        self._state_chip.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._state_chip.setStyleSheet(f"""
+            QLabel {{
+                color: {C.PRI}; background: {C.PRI_GHO};
+                border: 1px solid {C.PRI_DIM}; border-radius: 9px;
+                padding: 2px 10px;
+            }}
+        """)
+        lay.addWidget(self._state_chip)
+
+        # Health strip — real _SysMetrics values on the existing 2 s timer.
+        # Unavailable sensors render "N/A" (never 0); hidden when narrow.
+        self._health_lbl = QLabel("CPU — · MEM —\nGPU — · TMP —")
+        self._health_lbl.setFont(QFont("Courier New", 6))
+        self._health_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        lay.addWidget(self._health_lbl)
+
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
@@ -5807,6 +5867,15 @@ class MainWindow(QMainWindow):
         lay.addLayout(mid)
         lay.addStretch()
 
+        # ── right cluster: confirmation notice · clock/date ──
+        self._notice_dot = QLabel("●")
+        self._notice_dot.setFont(QFont("Courier New", 10))
+        self._notice_dot.setStyleSheet(f"color: {C.ACC}; background: transparent;")
+        self._notice_dot.setVisible(False)
+        self._notice_dot.setToolTip("Confirmation required — see the confirm banner")
+        lay.addWidget(self._notice_dot)
+        lay.addSpacing(6)
+
         right_col = QVBoxLayout(); right_col.setSpacing(2)
         self._clock_lbl = QLabel("00:00:00")
         self._clock_lbl.setFont(QFont("Courier New", 14, QFont.Weight.Bold))
@@ -5821,24 +5890,180 @@ class MainWindow(QMainWindow):
         lay.addLayout(right_col)
         return w
 
+    def _update_state_chip(self, state: str):
+        """Header chip + confirmation notice dot — both driven exclusively by
+        the real app state (single _apply_state seam, no parallel source)."""
+        chip = getattr(self, "_state_chip", None)
+        if chip is None:
+            return
+        col = None
+        hud = getattr(self, "hud", None)
+        if hud is not None:
+            try:
+                col = hud._state_accent()
+            except Exception:
+                col = None
+        hexc = col.name() if col is not None else C.PRI
+        chip.setText(f"● {state}")
+        chip.setStyleSheet(f"""
+            QLabel {{
+                color: {hexc}; background: {C.PRI_GHO};
+                border: 1px solid {hexc}; border-radius: 9px;
+                padding: 2px 10px;
+            }}
+        """)
+        dot = getattr(self, "_notice_dot", None)
+        if dot is not None:
+            dot.setVisible(state == "WAITING_CONFIRMATION")
+
     def _tick_clock(self):
         self._clock_lbl.setText(time.strftime("%H:%M:%S"))
         self._date_lbl.setText(time.strftime("%a %d %b %Y"))
 
-    def _build_left_panel(self) -> QWidget:
+    def _build_nav_rail(self) -> QWidget:
+        """V3 left navigation — every entry maps to a real destination
+        (a center page or an existing overlay/opener). Sections the app does
+        not implement (Knowledge, Tools & Skills, multi-agent views) are
+        deliberately absent rather than faked."""
         w = QWidget()
-        w.setFixedWidth(_LEFT_W)
+        w.setFixedWidth(_NAV_W)
+        w.setObjectName("navRail")
         w.setStyleSheet(f"background: {C.DARK}; border-right: 1px solid {C.BORDER};")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 10, 8, 10)
-        lay.setSpacing(6)
+        lay.setSpacing(4)
 
-        hdr = QLabel("◈ SYS MONITOR")
+        self._nav_btns: dict[str, QPushButton] = {}
+        self._nav_collapsed = False
+        self._nav_auto = True          # responsive auto-collapse until user toggles
+
+        hdr = QLabel("◈  NAVIGATOR")
         hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
                           f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
         lay.addWidget(hdr)
         lay.addSpacing(2)
+
+        # (key, glyph, label, target) — target: int = center page index,
+        # str = existing opener method name (never a second implementation).
+        entries = [
+            ("command",   "⌂", "COMMAND CENTER", 0),
+            ("system",    "▤", "SYSTEM MONITOR", 1),
+            ("automations", "▷", "AUTOMATIONS",   "_open_automation_panel"),
+            ("conversations", "☰", "CONVERSATIONS", "_open_history_panel"),
+            ("activity",  "◈", "ACTIVITY",       "_open_activity_panel"),
+            ("settings",  "⚙", "SETTINGS",       "_toggle_drawer"),
+        ]
+
+        _btn_qss = f"""
+            QPushButton {{
+                text-align: left; padding: 7px 8px;
+                color: {C.TEXT_MED}; background: transparent;
+                border: 1px solid transparent; border-radius: 4px;
+            }}
+            QPushButton:hover {{
+                color: {C.PRI}; background: {C.PRI_GHO};
+                border-color: {C.BORDER_B};
+            }}
+            QPushButton:checked {{
+                color: {C.PRI}; background: {C.PRI_GHO};
+                border: 1px solid {C.PRI_DIM}; font-weight: bold;
+            }}
+        """
+        for key, glyph, label, target in entries:
+            b = QPushButton(f"{glyph}  {label}")
+            b.setFont(QFont("Courier New", 8))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(label.title())
+            b.setStyleSheet(_btn_qss)
+            b.setCheckable(key in ("command", "system"))
+            b._nav_key, b._nav_glyph, b._nav_label, b._nav_target = (
+                key, glyph, label, target)
+            b.clicked.connect(lambda _=False, bb=b: self._on_nav(bb))
+            self._nav_btns[key] = b
+            lay.addWidget(b)
+
+        lay.addStretch()
+
+        # Collapse toggle — rail shrinks to glyphs only (responsive breakpoint
+        # also drives this automatically below 900 px).
+        self._nav_toggle = QPushButton("≡  COLLAPSE")
+        self._nav_toggle.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._nav_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._nav_toggle.setStyleSheet(f"""
+            QPushButton {{
+                color: {C.TEXT_DIM}; background: transparent;
+                border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px;
+            }}
+            QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI_DIM}; }}
+        """)
+        self._nav_toggle.clicked.connect(self._toggle_nav)
+        lay.addWidget(self._nav_toggle)
+
+        proto = QLabel(f"PROTOCOL {APP_PROTOCOL}")
+        proto.setFont(QFont("Courier New", 6))
+        proto.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        proto.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(proto)
+
+        # initial selection = the page we actually start on
+        self._nav_btns["command"].setChecked(True)
+        return w
+
+    def _on_nav(self, btn: QPushButton):
+        """Single navigation handler: pages switch the center stack; overlay
+        targets just open the existing surface (no highlight hijack — the
+        page underneath stays the honest selection)."""
+        target = btn._nav_target
+        if isinstance(target, int):
+            self._pages.setCurrentIndex(target)
+            for key in ("command", "system"):
+                self._nav_btns[key].setChecked(key == btn._nav_key)
+            if not self._nav_collapsed and self._nav_auto is False:
+                pass
+        else:
+            opener = getattr(self, target, None)
+            if opener:
+                opener()
+
+    def _set_nav_collapsed(self, collapsed: bool):
+        if getattr(self, "_nav_collapsed", None) == collapsed:
+            return
+        self._nav_collapsed = collapsed
+        for b in self._nav_btns.values():
+            b.setText(f"{b._nav_glyph}  {b._nav_label}" if not collapsed
+                      else f"  {b._nav_glyph}")
+            b.setToolTip(b._nav_label.title())
+        self._left_panel.setFixedWidth(_NAV_W_SM if collapsed else _NAV_W)
+        self._nav_toggle.setText("≡" if collapsed else "≡  COLLAPSE")
+
+    def _toggle_nav(self):
+        self._nav_auto = False       # user override wins over auto-resize
+        self._set_nav_collapsed(not self._nav_collapsed)
+
+    def _build_sys_page(self) -> QWidget:
+        """V3 page 1 — SYSTEM MONITOR: the exact widgets and sampling the old
+        left panel used (same attrs, so _update_metrics/_SysMetrics are
+        untouched); decorative status chips replaced by the real MODEL/
+        PROVIDER card (Phase 6 fills its fields)."""
+        w = QWidget()
+        w.setStyleSheet(f"background: {C.BG};")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+
+        hdr = QLabel("◈  SYSTEM MONITOR")
+        hdr.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
+                          f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 6px;")
+        lay.addWidget(hdr)
+
+        card = QWidget()
+        card.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER};"
+                           f" border-radius: 6px;")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(12, 10, 12, 10)
+        cl.setSpacing(6)
 
         self._bar_cpu = MetricBar("CPU", C.PRI)
         self._bar_mem = MetricBar("MEM", C.ACC2)
@@ -5848,54 +6073,62 @@ class MainWindow(QMainWindow):
 
         for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
                     self._bar_gpu, self._bar_tmp]:
-            lay.addWidget(bar)
+            cl.addWidget(bar)
 
-        lay.addSpacing(4)
-
-        info_panel = QWidget()
-        info_panel.setStyleSheet(
-            f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;"
-        )
-        ip_lay = QVBoxLayout(info_panel)
-        ip_lay.setContentsMargins(6, 5, 6, 5)
-        ip_lay.setSpacing(3)
-
+        info_row = QHBoxLayout()
+        info_row.setSpacing(8)
         self._uptime_lbl = QLabel("UP  --:--")
         self._uptime_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        self._uptime_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent; border: none;")
-        ip_lay.addWidget(self._uptime_lbl)
+        self._uptime_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent;")
+        info_row.addWidget(self._uptime_lbl)
 
         self._proc_lbl = QLabel("PROC  --")
         self._proc_lbl.setFont(QFont("Courier New", 8))
-        self._proc_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
-        ip_lay.addWidget(self._proc_lbl)
+        self._proc_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+        info_row.addWidget(self._proc_lbl)
 
         os_name = {"Windows": "WIN", "Darwin": "macOS", "Linux": "LINUX"}.get(_OS, _OS.upper())
         os_lbl = QLabel(f"OS  {os_name}")
         os_lbl.setFont(QFont("Courier New", 8))
-        os_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
-        ip_lay.addWidget(os_lbl)
+        os_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent;")
+        info_row.addWidget(os_lbl)
+        info_row.addStretch()
+        cl.addLayout(info_row)
+        lay.addWidget(card)
 
-        lay.addWidget(info_panel)
-        lay.addSpacing(4)
+        # Phase 6 target slot: model/provider status card (real local
+        # snapshot only — created now so layout never shifts later).
+        self._prov_card = self._build_provider_card()
+        lay.addWidget(self._prov_card)
 
         lay.addStretch()
-
-        for txt, col in [
-            ("AI CORE\nACTIVE",  C.GREEN),
-            ("SEC\nCLEARED",     C.PRI),
-            ("PROTOCOL\n" + APP_PROTOCOL,   C.TEXT_DIM),
-        ]:
-            lbl = QLabel(txt)
-            lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(
-                f"color: {col}; background: {C.PANEL2};"
-                f"border: 1px solid {C.BORDER_A}; border-radius: 3px; padding: 4px;"
-            )
-            lay.addWidget(lbl)
-
         return w
+
+    def _build_provider_card(self) -> QWidget:
+        """MODEL/PROVIDER STATUS — local truth only: configured? cooling?
+        last error? (core.model_manager snapshot). Never a network probe,
+        never a credential."""
+        card = QWidget()
+        card.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER};"
+                           f" border-radius: 6px;")
+        l = QVBoxLayout(card)
+        l.setContentsMargins(12, 10, 12, 10)
+        l.setSpacing(5)
+
+        hdr = QLabel("◈  MODEL / PROVIDER STATUS")
+        hdr.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        l.addWidget(hdr)
+
+        self._prov_lbls: dict[str, QLabel] = {}
+        for key in ("gateway", "ladders", "live"):
+            row = QLabel("…")
+            row.setFont(QFont("Courier New", 8))
+            row.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
+            row.setWordWrap(True)
+            l.addWidget(row)
+            self._prov_lbls[key] = row
+        return card
     def _build_right_panel(self) -> QWidget:
         w = QWidget()
         w.setFixedWidth(_RIGHT_W)
@@ -6945,7 +7178,7 @@ class MainWindow(QMainWindow):
                               else "◉  HUD: REACTOR CORE")
         self._hud_btn.setStyleSheet(style)
         self._hud_btn.setToolTip(
-            "An animated head that speaks your words and shows what JARVIS is "
+            "An animated head that speaks your words and shows what AETHER-I is "
             "doing. Tap to switch to the reactor core."
             if face else
             "A reactor core that turns with the state and moves with your voice. "
@@ -7472,6 +7705,7 @@ class MainWindow(QMainWindow):
                 pass
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
+        self._update_state_chip(state)
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False
