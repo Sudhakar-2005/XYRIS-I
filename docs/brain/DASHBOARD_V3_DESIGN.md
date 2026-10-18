@@ -237,25 +237,51 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
 8 voice/command polish · 9 responsive + measured perf + a11y ·
 10 regression + DoD. Git checkpoint per phase.
 
-## DoD checklist (spec §21 — filled in Phase 10)
+## DoD checklist (spec §21 — verified in Phase 10)
 
-- [ ] AETHER-I branding consistent
-- [ ] Existing neural core preserved
-- [ ] Coherent visual identity (tokens above)
-- [ ] Panels readable + responsive
-- [ ] Activity logs do not overlap
-- [ ] Telemetry from real sources
-- [ ] Memory statistics accurate
-- [ ] Provider status truthful
-- [ ] Voice controls reflect actual state
-- [ ] Automation controls use existing engine
-- [ ] Brain visualization uses real observable events
-- [ ] Permissions remain enforced
-- [ ] Performance measured (real numbers, env timer)
-- [ ] Accessibility addressed (contrast, no color-only, reduced-motion)
-- [ ] Existing features functional (suite green)
-- [ ] Relevant tests pass
-- [ ] Known limitations documented
+- [x] AETHER-I branding consistent — `APP_VERSION`/`APP_PROTOCOL` constants
+      + sweep (phase 2); `TestV3Shell::test_branding_constants`.
+- [x] Existing neural core preserved — HudCanvas is page 0 untouched,
+      `_auto_sig` band seam intact; `TestV3CoreIntegration`.
+- [x] Coherent visual identity (tokens above) — every V3 surface styles
+      from class `C`; retheme via `apply_ui_accent` still reaches them.
+- [x] Panels readable + responsive — nav collapse <900 px +
+      manual-override tests (`test_collapse_roundtrip`), word-wrap rows.
+- [x] Activity logs do not overlap — feed and log are separate tabs in
+      one card (`test_right_rail_has_feed_and_tasks_panels`).
+- [x] Telemetry from real sources — `_SysMetrics`/`psutil` on System page;
+      provider card from `is_configured()`/`MODEL_MANAGER.snapshot()`
+      (`TestV3ProviderCard`); `-1.0` → "N/A" preserved.
+- [x] Memory statistics accurate — page filled from `get_memory_stats()`
+      and asserted equal to the manager's own output
+      (`test_stats_match_real_memory_manager`).
+- [x] Provider status truthful — local state only, no network probe, no
+      credential (`test_no_credential_in_card`), cooling/error from
+      real snapshot fields.
+- [x] Voice controls reflect actual state — mic/mute text + chip from the
+      real `_muted` flag incl. the JarvisUI setter path; interrupt text
+      bound to `hud.speaking`; `TestV3VoiceSurface`.
+- [x] Automation controls use existing engine — nav opens the existing
+      overlay; runner passes the same fast-fail gate; header strip reads
+      `engine.status_summary()` (hidden when unbound, never zeros);
+      `TestV3AutomationCenter`.
+- [x] Brain visualization uses real observable events — V2 seam tests
+      (`test_core_visual*.py`) + `_auto_sig` emission test.
+- [x] Permissions remain enforced — dashboard buttons call the existing
+      openers/confirm banners only; no new permission path added.
+- [x] Performance measured (real numbers, env timer) —
+      `tools/v3_perf_bench.py` table in the Phase 9 entry; every p95
+      < 16.67 ms.
+- [x] Accessibility addressed (contrast, no color-only, reduced-motion)
+      — 12 token pairs ≥ 4.5:1 (`TestV3A11y`), state words always
+      rendered alongside colour, zero property animations in V3 panels,
+      focusable nav, one visible-gated timer per panel.
+- [x] Existing features functional (suite green) — **1471 passed,
+      26 subtests** after phase 10; live boot verified (engine ready,
+      session connected, scheduler firing, no tracebacks —
+      `%TEMP%\aether_v3_boot.log`).
+- [x] Relevant tests pass — `tests/test_dashboard_v3.py`: 49 tests.
+- [x] Known limitations documented — living section below.
 
 ## Known limitations (living)
 
@@ -265,6 +291,11 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
 - Model status is local-config + local-run health; it never probes the API
   (cost/latency) so "connected" is claimed only when a live session flag
   exists.
+- Right-rail feed shows the newest 60 rows; a first-open backlog beyond
+  that is cursor-skipped by design (the ring keeps 200 for the overlay's
+  full-history view).
+- The automation engine strip renders only when the engine was bound at
+  `run()` — absent binding it is hidden rather than shown as zeros.
 
 ## Phase progress (living)
 
@@ -287,7 +318,7 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
   filled from `is_configured()` + `MODEL_MANAGER.snapshot()` + `LIVE_MODEL`
   on the existing 2 s metric timer, System page only — no network probe,
   no credential, cooling/last_error from real fields.
-- Phase 7–8 (this checkpoint): automation center — new
+- Phase 7–8: automation center — new
   `bind_automation_engine` seam (main.py → JarvisUI → overlay), header
   strip reads real `engine.status_summary()` on the overlay's existing
   2.5 s timer (absent engine ⇒ strip hidden, never zeros); voice §J —
@@ -295,7 +326,7 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
   `_apply_state` sink (no new timer), mic/mute text + chip verified
   end-to-end incl. the JarvisUI `muted` property setter used by the
   dashboard emergency-stop path.
-- Phase 9 (this checkpoint): measured perf (`tools/v3_perf_bench.py`,
+- Phase 9: measured perf (`tools/v3_perf_bench.py`,
   offscreen, this machine — real numbers, rerun to reproduce):
 
   | surface | avg ms | p95 ms |
@@ -317,4 +348,11 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
   start/stop, no duplicate metric collector. Suite guards:
   `TestV3A11y`, `TestV3PerfSmoke` (30 ms regression slack — the precise
   numbers live in the tool, not in asserts).
-- Remaining: Phase 10 regression + DoD.
+- Phase 10 (this checkpoint): regression — full suite **1471 passed /
+  26 subtests**, `tests/test_dashboard_v3.py` **49 tests** green; live
+  boot verified end-to-end (config → plugins → automation engine +
+  scheduler → Live session connected → mic/recv/play running → briefing
+  sent → dashboard bound; no tracebacks in stdout/stderr). DoD above
+  checked against evidence. **V3 dashboard: complete.**
+- Remaining: nothing — DoD met; further changes are iteration, not this
+  project.
