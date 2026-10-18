@@ -88,7 +88,7 @@ window title 4937/7227, header badge 5764, tray tooltip/menu
 1803, 2207, 3125/3128, 3276, 4231, 4269, 4865, 5195, 5791, 6948 and
 `main.py:3236/3240` boot lines (they land in the on-screen log).
 Keep: internal autostart/shortcut identifiers (`JARVIS_AI`, `jarvis.ico`),
-module headers, LICENSE, footer attribution ("By FatihMakes"), and the
+module headers, LICENSE, footer attribution ("BY_SUDHAKAR"), and the
 model's persona system prompts (product behavior, not UI chrome).
 
 **Styling:** palette class `C` (94–115): BG `#00060a`, PANEL `#010d14`,
