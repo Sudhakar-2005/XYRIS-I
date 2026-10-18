@@ -4,7 +4,9 @@
   stubs must never pass).
 * M1 — pair materialization from local transcripts + Recall@5 scoring.
 * M2/M4 — label and A/B packet exports (structure + counts only; these
-  files hold real transcripts and stay local/gitignored).
+  files hold real transcripts and stay local/gitignored), plus the
+  append-only review sidecars (m2_review.json / m4_preferences.json)
+  validated through tools/eval_m2_m4_review.py when present.
 
 Everything local: no network, no model calls, real memory stores untouched.
 """
@@ -131,6 +133,68 @@ class TestPacketExports(unittest.TestCase):
             encoding="utf-8"))
         self.assertIn("awaiting human labels", info["m2"]["status"])
         self.assertIn("awaiting human preference", info["m4"]["status"])
+
+
+@unittest.skipUnless((DATA / "m2_review.json").exists(),
+                     "local M2 review sidecar not present (gitignored)")
+@unittest.skipUnless((DATA / "m4_preferences.json").exists(),
+                     "local M4 preferences sidecar not present (gitignored)")
+class TestReviewSidecars(unittest.TestCase):
+    """Append-only sidecars hold the review the blank packets cannot:
+    full depth lives in tools/eval_m2_m4_review.py (this runs it)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = _load("eval_m2_m4_review")
+        cls.rc = cls.mod.main()
+        cls.m2 = json.loads((DATA / "m2_review.json").read_text(
+            encoding="utf-8"))
+        cls.m4 = json.loads((DATA / "m4_preferences.json").read_text(
+            encoding="utf-8"))
+        cls.report = json.loads((DATA / "m2_m4_review_report.json").read_text(
+            encoding="utf-8"))
+
+    def test_review_tool_validates_both_sidecars(self):
+        self.assertEqual(self.rc, 0)
+        self.assertEqual(self.report["status"], "ok")
+        self.assertEqual(self.report["errors"], [])
+
+    def test_m2_labels_are_double_pass_and_not_faked_gold(self):
+        rev = self.m2["review"]
+        self.assertTrue(rev["independence"].startswith("NOT_INDEPENDENT"),
+                        "same-model passes must not be sold as human gold")
+        self.assertIn("live", rev["model_tool_choice"])
+        self.assertIn("replay", rev["model_tool_choice"])
+        # per-label honesty: values valid, replay field blank until scored
+        for k, v in self.m2["labels"].items():
+            self.assertIn(v["a"]["target"], ("tool", "persona", "no-op"))
+            self.assertIn(v["b"], ("tool", "persona", "no-op"))
+            self.assertEqual(v["tool_choice"], "",
+                             "model baseline needs a live replay, not invention")
+            self.assertIsNone(v["human"], "human adjudication field stays open")
+
+    def test_m2_stats_match_labels(self):
+        stats = self.m2["stats"]
+        labels = self.m2["labels"]
+        self.assertEqual(stats["n"], len(labels))
+        agree = sum(1 for v in labels.values() if v["agree"])
+        self.assertEqual(stats["agreement"], round(agree / len(labels), 4))
+        self.assertEqual(sorted(stats["disagree_ids"]),
+                         sorted(int(k) for k, v in labels.items()
+                                if not v["agree"]))
+
+    def test_m4_picks_valid_and_rule_honest(self):
+        prefs = self.m4["preferences"]
+        self.assertEqual(sorted(int(k) for k in prefs),
+                         list(range(1, 11)))
+        for k, v in prefs.items():
+            self.assertIn(v["pick"], ("A", "B", "tie"))
+            self.assertTrue(v["reason"].strip())
+        rule = self.m4["decision_rule"]
+        self.assertTrue(rule["within_budget"])
+        self.assertLessEqual(rule["overhead_pct"], 10.0)
+        self.assertTrue(rule["result"])
+        self.assertTrue(rule["action"])
 
 
 if __name__ == "__main__":

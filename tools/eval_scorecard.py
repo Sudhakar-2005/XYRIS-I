@@ -8,6 +8,7 @@ exists (session transcripts, RungStats), and writes docs/brain/EVAL_SCORECARD.md
 Measured-metric subtools (outputs read from tests/eval/datasets/, local):
     tools/eval_m1_recall.py     M1 Recall@5 on real transcript pairs
     tools/eval_m2_m4_packets.py M2 label packet + M4 A/B preference packet
+    tools/eval_m2_m4_review.py  M2/M4 review sidecars (validate + stats)
     tools/eval_m5_matrix.py     M5 per-strategy confusion matrix (fixtures)
 
 Metrics awaiting a human step report NEEDS-HUMAN (labels/preferences are
@@ -178,13 +179,30 @@ def main() -> int:
                     f"{m1.get('decision')} (+ contract tests {passed} "
                     f"passed, {dur})")
         elif mid == "M2" and packets.get("m2", {}).get("turns"):
-            status = "NEEDS-HUMAN"
             n = packets["m2"]["turns"]
-            score = f"contract tests {passed} passed ({dur}); {n}-turn double-label packet ready"
-            note = ("labels are ground truth by design (plan: human intent) "
-                    "— packet at tests/eval/datasets/m2_labels.csv "
-                    "(local, gitignored); model-tool-choice baseline needs a "
-                    "live replay after labels exist")
+            rev = _eval_json("m2_review.json")
+            if rev.get("labels"):
+                st = rev["stats"]
+                status = "REVIEWED"
+                score = (f"{st['n']}-turn two-pass target labels, "
+                         f"self-agreement {st['agreement']:.0%} "
+                         f"{st['pass_a_counts']}; contract tests {passed} "
+                         f"passed ({dur})")
+                nb = len(st.get("borderline_ids") or [])
+                ds = len(st.get("disagree_ids") or [])
+                note = ("labels in local sidecar m2_review.json "
+                        "(gitignored, packets stay blank); same-model passes "
+                        f"— NOT human gold; {ds} disagreements + {nb} borderline "
+                        "ids flagged for human adjudication; model_tool_choice "
+                        "needs a live replay (never offline-invented); "
+                        "validate via tools/eval_m2_m4_review.py")
+            else:
+                status = "NEEDS-HUMAN"
+                score = f"contract tests {passed} passed ({dur}); {n}-turn double-label packet ready"
+                note = ("labels are ground truth by design (plan: human intent) "
+                        "— packet at tests/eval/datasets/m2_labels.csv "
+                        "(local, gitignored); model-tool-choice baseline needs a "
+                        "live replay after labels exist")
         elif mid == "M4" and m4:
             status = "MEASURED"
             score = (f"{m4['overhead_pct']}% of prompt "
@@ -193,6 +211,12 @@ def main() -> int:
             if packets.get("m4", {}).get("pairs"):
                 pref = (f"; A/B reviewer packet ready: {packets['m4']['pairs']} "
                         f"pairs at tests/eval/datasets/m4_ab_packet.md")
+            m4p = _eval_json("m4_preferences.json")
+            if m4p.get("preferences"):
+                st = m4p["stats"]
+                pref += (f"; review: {st['A']}A/{st['B']}B/{st['tie']} ties -> "
+                         f"{m4p['decision_rule']['result'].split(':')[0]} "
+                         "(placeholder note only)")
             note = ("Core-block token overhead measured on this box (real "
                     "memory + core/prompt.txt, char-exact); injection "
                     "contract covered by the Phase 3 memory tests"
