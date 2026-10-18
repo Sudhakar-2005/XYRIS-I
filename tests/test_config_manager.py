@@ -41,6 +41,14 @@ class TestConfigManagerReads(unittest.TestCase):
         name = get_assistant_name()
         self.assertIsInstance(name, str)
 
+    def test_get_assistant_name_fresh_install_default(self):
+        """Fresh-install default assistant name is 'XYRIS I' (Stage G)."""
+        with patch("memory.config_manager.load_api_keys", return_value={}):
+            self.assertEqual(get_assistant_name(), "XYRIS I")
+        with patch("memory.config_manager.load_api_keys",
+                   return_value={"assistant_name": ""}):
+            self.assertEqual(get_assistant_name(), "XYRIS I")
+
     def test_get_voice(self):
         voice = get_voice()
         self.assertIsInstance(voice, str)
