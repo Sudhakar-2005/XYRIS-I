@@ -95,7 +95,7 @@ Disposition: **CHANGE** / **KEEP** / **PRESERVE-HISTORY** /
 | `docs/aether-v3/phase0-audit.md` (33) + `bench-v2-vs-v3.txt` (1) | **PRESERVE-HISTORY** | point-in-time audit/benchmark record of the AETHER-I V2↔V3 comparison; not rewritten (spec §7E). Directory name also kept (self-referenced at `phase0-audit.md:444,534`) |
 | `docs/identity-migration/*` (this folder) | **new** | records the rename explicitly |
 | `readme.md:84,167,282,283,311` (`What's New in Mark LIV`, `every Mark from LII`, clone URL, tree) | **PRESERVE-HISTORY/external** | release-history prose + upstream URL (`FatihMakes/Mark-LIV`) are historical/external — not rewritten |
-| `LICENSE:1` `MARK LIV - JARVIS` | **DEFER (approval)** | legal document — name change only with legal review (spec §11) |
+| `LICENSE:1` `MARK LIV - JARVIS` | **CHANGE (STAGE G, user-approved)** | line 1 only → `XYRIS I — JARVIS`; copyright + CC BY-NC 4.0 grants byte-identical |
 
 ## E. Data — NEVER TOUCH (user data / sample fixtures)
 
@@ -109,6 +109,9 @@ Disposition: **CHANGE** / **KEEP** / **PRESERVE-HISTORY** /
 | `config/certs/jarvis.key`, `jarvis.crt` | TLS material (filenames referenced by server) | 7 |
 
 ## F. External / DEFER (approval required)
+
+> **STAGE G note:** every row below was resolved after explicit user
+> approval — resolutions and evidence in **§I** (bottom of file).
 
 | Item | Reason |
 |---|---|
@@ -155,3 +158,32 @@ Occurrences discovered after the initial scan and classified:
 Section G totals updated by the implementation: 131 scripted edits +
 1 test-data fix = **132 changes applied**; post-migration re-scan found
 **0 mismatches** against this table (see VALIDATION_REPORT §5).
+
+## I. Addendum — STAGE G resolution of deferred items (same day, user-approved)
+
+User instruction: "Complete all the todos" → the four approval-gated
+items were executed; one was resolved as KEEP by ruling (R4):
+
+| Item (§F) | Resolution |
+|---|---|
+| GitHub repo slug | **DONE** — `Sudhakar-2005/Mark-LIV` → `Sudhakar-2005/xyris-i` (owner-authenticated API `PATCH /repos/… {name}`); `origin` remote updated; `git ls-remote origin HEAD` = `981340d`; GitHub redirects old URLs. |
+| `git remote` URL | **DONE** — `https://github.com/Sudhakar-2005/xyris-i.git` |
+| `readme.md` clone URL `FatihMakes/Mark-LIV` | **KEEP** (unchanged) — external upstream reference (R6 / §D); not this repo's slug. |
+| Trademark / domain / handle | **PRELIMINARY SCAN DOCUMENTED — no clearance claimed** (spec §11); findings in MIGRATION_PLAN §G + VALIDATION_REPORT §8. |
+| New XYRIS I icon | **DONE** — `_build_jarvis_icon` → `_build_app_icon`; glowing-X mark; fresh `config/xyris.ico` (sizes 16–256); `config/jarvis.ico` retained (rollback + existing shortcuts). |
+| Fresh-install shortcut labels | **DONE** — `XYRIS I.lnk` / `XYRIS I.app` / `XYRIS I.desktop`, `CFBundleName` `XYRIS I`, Description `XYRIS I AI Assistant`, macOS launcher `XYRIS`. |
+| Default assistant name `JARVIS` → `XYRIS I` | **DONE** — 13 lines / 16 default-value occurrences: `memory/config_manager.py:55,56(×2),73`, `main.py:1393,1396`, `ui.py:413,1652,2412,2618,5180,7842(×2),7913,8244(×2)`. |
+| Wake word rebrand | **RESOLVED AS KEEP** (R4 / spec §3 Rule 4) — "Hey Jarvis" + `WAKE_MODEL="hey_jarvis"` untouched; not executed by design. |
+| Window-title dedup | already DONE in STAGE C. |
+
+**JARVIS occurrences surfaced during Stage G (post-audit scan) and classified:**
+
+| File:line | Value | Cat | Disposition |
+|---|---|---|---|
+| `main.py` ×34 (`[JARVIS] …` console prints) | log-channel labels | 4 | **KEEP** — persona/log layer (R4), same class as wake word; audit gap, now recorded |
+| `dashboard/server.py:401` | cert `ORGANIZATION_NAME "JARVIS"` | 7 | **KEEP** — existing paired TLS certs |
+| `main.py:2327,2832`, `core/activity.py:73`, tests | event `source: "jarvis"` id | 2 | **KEEP** — event schema compat |
+| `ui.py:6112,7917` | `("JARVIS","J.A.R.V.I.S")` subtitle conditions | 4 | **KEEP** — still fires if a user sets the name to JARVIS |
+| `ui.py:1675` | `startswith("jarvis:")` (+ new `startswith("aether-i:")`) | 2 | **KEEP + extended** — legacy session line-tags keep rendering as AI lines |
+| `ui.py:7442,7465,7469,7450,7475,7495` | autostart ids `JARVIS_AI`, `com.jarvis.assistant*`, `jarvis.desktop` | 5/7 | **KEEP** — changing check+write ids would double-register existing installs; internal identifiers only |
+| `core/wake_word.py:192`, `WAKE_MODEL` | wake model name | 4 | **KEEP** — trained model file |

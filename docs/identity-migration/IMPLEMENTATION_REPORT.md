@@ -101,6 +101,9 @@ readme checks switched to content search); `Mark LV` history line and
 `DASHBOARD_V3:85` V2 record (classified PRESERVE).
 
 ## 5. Files NOT touched (by design)
+*(As of STAGE F; STAGE G later changed several of these by user approval
+— `LICENSE:1`, icon + shortcut labels, default-name sites, GitHub
+slug/remote — see §7.)*
 `LICENSE` (legal, deferred), `.gitignore` patterns (only header comment),
 gitignored data/secrets (`config/api_keys.json` *contents* except the
 recorded `assistant_name` value edit, `config/certs/*`, `memory/*`,
@@ -114,3 +117,34 @@ GitHub remote/URL, `docs/aether-v3/` directory name, env vars, logger names.
 131 scripted edits + 1 manual test fix = 132 applied changes.
 No commit history rewritten; changes committed in 4 stage commits
 (see VALIDATION_REPORT §5).
+
+## 7. Stage G — deferred items completed (user-approved, 2026-10-18)
+
+User instruction "Complete all the todos" → the four approval-gated
+items of MIGRATION_PLAN §G executed (resolutions table: IDENTITY_INVENTORY §I):
+
+- **Fresh-install default name `JARVIS` → `XYRIS I`:** 13 lines / 16
+  occurrences (`memory/config_manager.py:55,56,73`, `main.py:1393,1396`,
+  `ui.py:413,1652,2412,2618,5180,7842,7913,8244`); `ui.py:1675` extended
+  with legacy `aether-i:` line-tag prefix so old session turns still
+  render as AI lines. Wake word, 34 × `[JARVIS]` console labels,
+  subtitle conditions, autostart ids, cert org name: **kept** (R4).
+- **New icon:** `_build_jarvis_icon` → `_build_app_icon`, glowing-X
+  design (cyan X + white-hot core on dark disc, 4× supersampled);
+  `config/xyris.ico` generated (sizes 16–256) and committed;
+  `config/jarvis.ico` retained (existing shortcuts + rollback).
+- **Shortcut labels (fresh-install surfaces):** `XYRIS I.lnk`,
+  `XYRIS I.app`, `XYRIS I.desktop`, `CFBundleName` `XYRIS I`,
+  Description `XYRIS I AI Assistant`, macOS launcher/`CFBundleExecutable`
+  `XYRIS`; bundle id `com.jarvis.assistant` kept (existing installs).
+- **`LICENSE` line 1:** `MARK LIV — JARVIS` → `XYRIS I — JARVIS`
+  (copyright + CC BY-NC 4.0 grants byte-identical).
+- **GitHub:** repo `Sudhakar-2005/Mark-LIV` → `Sudhakar-2005/xyris-i`
+  (owner-authenticated API); `origin` remote updated; `git ls-remote`
+  verified (`981340d`); readme clone URL to `FatihMakes/Mark-LIV`
+  unchanged (external upstream).
+- **Trademark/domain:** preliminary scan documented in MIGRATION_PLAN §G —
+  **no clearance claimed** (spec §11).
+- **Tests:** +3 (`test_get_assistant_name_fresh_install_default`,
+  `tests/test_app_icon.py` ×2) → suite `1478 passed / 0 failed`;
+  scorecard `472 / 0` (see VALIDATION_REPORT §8).

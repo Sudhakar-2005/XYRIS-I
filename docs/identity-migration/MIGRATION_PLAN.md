@@ -97,12 +97,18 @@ identity (boot log will read `SYS: XYRIS I online.`).
 `tools/eval_export_datasets.py:54`: `if prefix in ("AETHER-I", "XYRIS I")`.
 Old exports + new exports both classify. No dataset file rewritten.
 
-## Group G — external / approval-gated (document only, do NOT execute)
+## Group G — external / approval-gated (executed in STAGE G, user-approved)
 
-GitHub repo + remote rename to `xyris-i`; `readme` clone URL upstream;
-trademark/domain/handle search (pending item, never claimed);
-redesign of `jarvis.ico`; fresh-install default name `JARVIS` →
-`XYRIS I`; wake word rebrand.
+Originally doc-only ("do NOT execute") until the user approved
+completion ("complete all the todos"):
+
+| Item | Resolution (2026-10-18) |
+|---|---|
+| GitHub repo + remote rename to `xyris-i` | **DONE** — `Sudhakar-2005/Mark-LIV` → `Sudhakar-2005/xyris-i` via owner-authenticated API call; `origin` → `https://github.com/Sudhakar-2005/xyris-i.git`; `git ls-remote` verified; GitHub redirects old URLs. `readme` clone URL `FatihMakes/Mark-LIV` left unchanged (external upstream, R6). |
+| Trademark/domain/handle search | **PRELIMINARY SCAN ONLY — no legal clearance claimed (spec §11).** Word-mark: "XYRIS REAL-TIME TOOLBOX" (USPTO 74538947, Cl. 9, filed 1994) is **dead**; "XYRIS LIFE SCIENCES" marks registered in Cl. 5 (India, different goods); no live plain-`XYRIS` Cl. 9 registration surfaced in this scan (not exhaustive). Third-party brand use of "Xyris" **in AI**: xyrisai.com ("Xyris AI", Munich, business AI automation, 2026), xyris.site (AI chat platform), xyris.com.au (nutrition software). Domains via DNS resolution (not whois): resolving = `xyris.com`, `xyris.io`, `xyris.app`, `xyris.ai`; no A-record = `xyris.dev`, `xyrisi.com`, `xyris-i.com`. **A professional clearance search + counsel is required before any commercial adoption.** |
+| Redesign of `jarvis.ico` | **DONE** — `MainWindow._build_jarvis_icon` → `_build_app_icon`, new glowing-X mark (distinct from arc-reactor); `config/xyris.ico` generated (16–256px, committed); `config/jarvis.ico` retained for existing shortcuts/rollback; shortcut labels → `XYRIS I.lnk`/`XYRIS I.app`/`XYRIS I.desktop`. |
+| Fresh-install default name `JARVIS` → `XYRIS I` | **DONE** — 13 lines / 16 default-value occurrences (`config_manager.py` ×3, `main.py` ×2, `ui.py` ×8); user config values, wake word, `[JARVIS]` console labels, persona prose untouched (R4). Locked by `test_get_assistant_name_fresh_install_default`. |
+| Wake word rebrand | **NOT EXECUTED — resolved as KEEP** (R4 / spec §3 Rule 4: "Hey Jarvis" = trained model + user habit). |
 
 ## Group H — storage & security (read-only guarantees)
 

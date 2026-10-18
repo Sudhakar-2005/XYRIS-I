@@ -76,8 +76,10 @@ Full-repo scan (code + docs + configs, excluding gitignored data):
 - **`MARK` remaining:** release-history prose in readme (9 sites),
   `DASHBOARD_V3_DESIGN:85` V2-state record, `audio_devices.py:20`
   "Mark LV" history, external URLs/paths — all PRESERVE.
-- **`JARVIS`:** persona layer untouched (defaults, wake word, shortcut,
-  dashboard persona prose; only the two HTML `<title>` labels changed).
+- **`JARVIS`:** persona layer kept (wake word, dashboard persona prose,
+  `[JARVIS]` console labels, subtitle branches; HTML `<title>` labels
+  changed) — except the fresh-install *default name* sites, which were
+  switched to `XYRIS I` in STAGE G (13 lines / 16 occurrences; §8).
 - **Mismatch count vs inventory: 0.**
 
 ## 6. Data & scope safety
@@ -89,7 +91,8 @@ Full-repo scan (code + docs + configs, excluding gitignored data):
 - `config/api_keys.json`: only the `assistant_name` value edited
   (gitignored anyway; value never printed; reversible — see ROLLBACK_GUIDE).
 - `LICENSE`, `.gitignore` patterns, `docs/aether-v3/`, `.ico`/`.lnk`
-  assets: untouched.
+  assets: untouched. *(Statement as of STAGE F; STAGE G later changed
+  `LICENSE` line 1 and added `config/xyris.ico` — see §8.)*
 - Line endings: diffs show content-only changes (142 insertions / 139
   deletions across 61 files — no line-ending churn).
 
@@ -105,4 +108,17 @@ Full-repo scan (code + docs + configs, excluding gitignored data):
 | No personal data altered | ✅ | §6 |
 | No secrets exposed | ✅ | config values never printed; certs untouched |
 | All 6 deliverable docs complete | ✅ | this folder (reports: this + IMPLEMENTATION + ROLLBACK) |
-| Pending items not overclaimed | ✅ | trademark/remote rename/LICENSE = deferred, listed in MIGRATION_PLAN §G |
+| Pending items not overclaimed | ✅ | all four executed in STAGE G after user approval (MIGRATION_PLAN §G); trademark scan documented as **preliminary, no clearance claimed** (§8) |
+
+## 8. Stage G validation (deferred-item completion, 2026-10-18)
+
+| Check | Result |
+|---|---|
+| Full suite after Stage G edits | `1478 passed, 0 failed` (+3 new tests: fresh-install default ×1, icon ×2) |
+| Scorecard | `472 passed, 0 failed` (unchanged) |
+| `py_compile` (`ui.py`, `main.py`, `memory/config_manager.py`) | OK |
+| Icon generation | `MainWindow._build_app_icon(config/xyris.ico)` → `True`; ICO sizes `[16,32,48,64,128,256]`; visual check: glowing cyan X with white-hot core on dark disc, cyan ring |
+| Repo rename | GitHub API `PATCH /repos/Sudhakar-2005/Mark-LIV {"name":"xyris-i"}` (auth = owner `Sudhakar-2005`) → `full_name=Sudhakar-2005/xyris-i`; `origin` updated; `git ls-remote origin HEAD` = `981340d`; old URLs redirect |
+| Trademark/domain scan | preliminary only — findings + caveats in MIGRATION_PLAN §G; **no legal clearance claimed** (spec §11); professional search recommended before commercial use |
+| LICENSE diff | line 1 only: `MARK LIV — JARVIS` → `XYRIS I — JARVIS`; copyright + CC BY-NC 4.0 text byte-identical |
+| Local config value | `config/api_keys.json` `assistant_name` already `XYRIS I` (gitignored; value not printed) |
