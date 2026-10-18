@@ -3166,6 +3166,14 @@ class JarvisLive:
                           if _eng is not None else None)
             except Exception:
                 pass
+        # V3 Phase 7: the panel's header strip reads the engine's real
+        # status_summary() (total/active/running) — never a second poller.
+        _bind_eng = getattr(_ui, "bind_automation_engine", None)
+        if callable(_bind_eng):
+            try:
+                _bind_eng(getattr(self, "_automation", None))
+            except Exception:
+                pass
         self.emit_event(EventType.SYSTEM_STARTUP, source="main")
 
         # Automation V0.1: scheduler starts once the loop + bus are live and

@@ -244,6 +244,139 @@ class TestV3ProviderCard(unittest.TestCase):
             self.assertNotIn("aiza", low)   # Gemini key prefix
 
 
+class TestV3AutomationCenter(unittest.TestCase):
+    """Phase 7 — nav AUTOMATIONS opens the existing overlay; the header
+    strip reflects a real engine.status_summary() when bound, and stays
+    hidden (not zeros) when no engine is bound."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+        cls.w = MainWindow("face.png")
+        cls.w.hide()
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.w._metric_tmr.stop()
+        except Exception:
+            pass
+        cls.w.deleteLater()
+        cls.app.processEvents()
+
+    def tearDown(self):
+        ov = getattr(self.w, "_automation_overlay", None)
+        if ov is not None:
+            ov.hide()
+            ov.deleteLater()
+            self.w._automation_overlay = None
+        self.app.processEvents()
+
+    def test_nav_opens_existing_overlay(self):
+        self.w._on_nav(self.w._nav_btns["automations"])
+        self.assertTrue(hasattr(self.w, "_automation_overlay"))
+        self.assertIsNotNone(self.w._automation_overlay)
+
+    def test_engine_strip_hidden_without_engine(self):
+        self.w._automation_engine = None
+        self.w._on_nav(self.w._nav_btns["automations"])
+        ov = self.w._automation_overlay
+        ov._update_engine_strip()
+        self.assertTrue(ov._engine_lbl.isHidden())   # absent, not zeros
+        self.assertEqual(ov._engine_lbl.text(), "")
+
+    def test_engine_strip_shows_real_summary(self):
+        class _Eng:
+            def status_summary(self):
+                return {"total": 7, "active": 2, "running": 1,
+                        "by_status": {}}
+        self.w._automation_engine = _Eng()
+        self.w._on_nav(self.w._nav_btns["automations"])
+        ov = self.w._automation_overlay
+        ov._update_engine_strip()
+        self.assertFalse(ov._engine_lbl.isHidden())
+        txt = ov._engine_lbl.text()
+        self.assertIn("7 saved", txt)
+        self.assertIn("2 active", txt)
+        self.assertIn("1 running", txt)
+
+    def test_engine_strip_fails_soft(self):
+        class _Boom:
+            def status_summary(self):
+                raise RuntimeError("engine gone")
+        self.w._automation_engine = _Boom()
+        self.w._on_nav(self.w._nav_btns["automations"])
+        ov = self.w._automation_overlay
+        ov._update_engine_strip()
+        self.assertEqual(ov._engine_lbl.text(), "")
+
+    def test_runner_still_binds_through_same_seam(self):
+        self.w._automation_runner = lambda wf: None
+        self.w._on_nav(self.w._nav_btns["automations"])
+        self.assertIsNotNone(self.w._automation_overlay._runner)
+
+
+class TestV3VoiceSurface(unittest.TestCase):
+    """Phase 8 — §J: interrupt text bound to the real speaking flag, mic
+    text bound to the real mute flag (state word always present — never
+    colour alone), both driven from the single _apply_state sink."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _app()
+        cls.w = MainWindow("face.png")
+        cls.w.hide()
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.w._metric_tmr.stop()
+        except Exception:
+            pass
+        cls.w.deleteLater()
+        cls.app.processEvents()
+
+    def test_interrupt_text_follows_speaking_flag(self):
+        self.w._apply_state("SPEAKING")
+        self.assertIn("SPEAKING", self.w._interrupt_btn.text())
+        self.w._apply_state("LISTENING")
+        self.assertIn("IDLE", self.w._interrupt_btn.text())
+        self.w._apply_state("EXECUTING")
+        self.assertIn("IDLE", self.w._interrupt_btn.text())
+
+    def test_interrupt_click_still_live_when_idle(self):
+        calls = []
+        self.w.on_interrupt = lambda: calls.append(1)
+        self.w._apply_state("IDLE")
+        self.w._do_interrupt()
+        self.assertEqual(len(calls), 1)   # flush stays valid when idle
+
+    def test_mute_toggle_updates_text_and_state_word(self):
+        self.w._toggle_mute()
+        self.assertTrue(self.w._muted)
+        self.assertIn("MUTED", self.w._mute_btn.text())
+        self.assertIn("MUTED", self.w._state_chip.text())
+        self.assertEqual(self.w.hud.state, "MUTED")
+        self.w._toggle_mute()
+        self.assertFalse(self.w._muted)
+        self.assertIn("ACTIVE", self.w._mute_btn.text())
+        self.assertIn("LISTENING", self.w._state_chip.text())
+
+    def test_mute_property_setter_syncs_style(self):
+        # JarvisLive's emergency-stop path goes through the JarvisUI
+        # property setter (ui.muted = True) — test the real descriptor.
+        from ui import JarvisUI
+        j = JarvisUI.__new__(JarvisUI)
+        j._win = self.w
+        self.w._muted = False
+        j.muted = True
+        self.assertTrue(self.w._muted)
+        self.assertIn("MUTED", self.w._mute_btn.text())
+        self.assertIn("MUTED", self.w._state_chip.text())
+        j.muted = False
+        self.assertIn("ACTIVE", self.w._mute_btn.text())
+
+
 class TestV3CoreIntegration(unittest.TestCase):
     """Phase 3 — the neural core is page 0, identity unchanged, and the V2
     automation band seam is intact."""

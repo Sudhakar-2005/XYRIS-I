@@ -272,20 +272,27 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
 - Phase 2 (6bee183): shell — nav rail, center stack (page 0 = existing
   HudCanvas untouched, page 1 = System Monitor), top-bar state chip +
   health strip, AETHER-I branding sweep, responsive collapse.
-- Phase 3–4 (this checkpoint): core verified in page 0 (chip ↔ HUD single
+- Phase 3–4: core verified in page 0 (chip ↔ HUD single
   sink via `_apply_state`, `_auto_sig` band seam intact); right rail now
   tabbed ACTIVITY (`_FeedPanel`, own-cursor `drain_since` on the shared
   ring, visible-only 1.5 s timer, bounded 60 rows) + LOG (existing
   `LogWidget`, preserved); `AGENTS & TASKS` (`_TasksPanel`, single-runtime
   truth + real `AutomationStore.all_runs`, empty state, no fake rows).
   Nav settings toggle bug fixed (`_toggle_drawer` needed its `checked`
-  arg). Coverage: `tests/test_dashboard_v3.py` (25 tests).
-- Phase 5–6 (this checkpoint): System page telemetry confirmed on the
+  arg). Coverage: `tests/test_dashboard_v3.py`.
+- Phase 5–6: System page telemetry confirmed on the
   real `_SysMetrics` seam; new MEMORY page (page 2, nav entry) filled
   from `get_memory_stats()` on demand (switch/button — no hidden timer),
   inspector button reuses the existing `MemoryOverlay`; provider card
   filled from `is_configured()` + `MODEL_MANAGER.snapshot()` + `LIVE_MODEL`
   on the existing 2 s metric timer, System page only — no network probe,
   no credential, cooling/last_error from real fields.
-- Remaining: Phase 7 automation center · Phase 8 voice polish ·
-  Phase 9 perf/a11y · Phase 10 regression + DoD.
+- Phase 7–8 (this checkpoint): automation center — new
+  `bind_automation_engine` seam (main.py → JarvisUI → overlay), header
+  strip reads real `engine.status_summary()` on the overlay's existing
+  2.5 s timer (absent engine ⇒ strip hidden, never zeros); voice §J —
+  interrupt text bound to the real `hud.speaking` flag from the single
+  `_apply_state` sink (no new timer), mic/mute text + chip verified
+  end-to-end incl. the JarvisUI `muted` property setter used by the
+  dashboard emergency-stop path.
+- Remaining: Phase 9 perf/a11y · Phase 10 regression + DoD.

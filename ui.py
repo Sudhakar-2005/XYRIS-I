@@ -4252,7 +4252,7 @@ class AutomationOverlay(_HudOverlay):
 
     _OW, _OH = 720, 470
 
-    def __init__(self, store=None, parent=None, runner=None):
+    def __init__(self, store=None, parent=None, runner=None, engine=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(f"""
@@ -4265,6 +4265,7 @@ class AutomationOverlay(_HudOverlay):
         self.setFixedSize(self._OW, self._OH)
         self._store = store
         self._runner = runner
+        self._engine = engine          # V3 Phase 7: status_summary strip
         self._selected = None
         self._wf = None
         self._maximised = False
@@ -4288,9 +4289,15 @@ class AutomationOverlay(_HudOverlay):
             QPushButton:hover {{ border-color: {C.PRI}; color: {C.PRI}; }}
         """)
         self._max_btn.clicked.connect(self._toggle_maximise)
+        self._engine_lbl = QLabel("")
+        self._engine_lbl.setFont(QFont("Courier New", 7))
+        self._engine_lbl.setStyleSheet(
+            f"color: {C.TEXT_DIM}; background: transparent;")
+        self._engine_lbl.setVisible(False)   # honest: shown only when bound
         hrow = QHBoxLayout()
         hrow.addWidget(hdr)
         hrow.addStretch()
+        hrow.addWidget(self._engine_lbl)
         hrow.addWidget(self._max_btn)
         self._lay.addLayout(hrow)
         esc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
@@ -4420,6 +4427,7 @@ class AutomationOverlay(_HudOverlay):
             return default
 
     def _pull(self):
+        self._update_engine_strip()
         items = self._call("list", default=[]) or []
         if self._selected is not None and \
                 not any(str(i.get("id")) == self._selected for i in items):
@@ -4433,6 +4441,25 @@ class AutomationOverlay(_HudOverlay):
             self._canvas.set_workflow(self._wf)
             self._render_info()
             self._render_runs()
+
+    def _update_engine_strip(self):
+        """V3 Phase 7 — one honest line from engine.status_summary() on the
+        overlay's existing 2.5 s store timer. No engine bound ⇒ the strip
+        stays hidden (absence, not fake zeros)."""
+        eng = self._engine
+        if eng is None:
+            self._engine_lbl.setVisible(False)
+            return
+        try:
+            s = eng.status_summary()
+        except Exception:
+            self._engine_lbl.setVisible(False)
+            return
+        self._engine_lbl.setText(
+            f"ENGINE  {int(s.get('total', 0))} saved  ·  "
+            f"{int(s.get('active', 0))} active  ·  "
+            f"{int(s.get('running', 0))} running")
+        self._engine_lbl.setVisible(True)
 
     def _rebuild_list(self, items):
         while self._list_rows.count():
@@ -5324,6 +5351,7 @@ class MainWindow(QMainWindow):
         self._automation_overlay = None
         self._automation_store = None  # Phase 10: bound by JarvisUI at run()
         self._automation_runner = None  # double-tap start, bound at run()
+        self._automation_engine = None  # V3 Phase 7: status_summary strip
 
         # Camera preview overlay (child of central widget, positioned in resizeEvent)
         self._cam_preview = _CameraPreview(self.centralWidget())
@@ -7969,6 +7997,8 @@ class MainWindow(QMainWindow):
         ov = AutomationOverlay(store=getattr(self, "_automation_store", None),
                                parent=self.centralWidget(),
                                runner=getattr(self, "_automation_runner",
+                                              None),
+                               engine=getattr(self, "_automation_engine",
                                               None))
         self._centre_overlay(ov)
         self._automation_overlay = ov
@@ -8123,12 +8153,43 @@ class MainWindow(QMainWindow):
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
         self._update_state_chip(state)
+        self._update_voice_row()
         tasks = getattr(self, "_tasks_panel", None)
         if tasks is not None:
             try:
                 tasks.set_state(state)
             except Exception:
                 pass
+
+    def _update_voice_row(self):
+        """V3 §J — interrupt text bound to the real speaking flag, called
+        from the single _apply_state sink (no timer of its own). The click
+        stays live either way (flushing pending input is valid even when
+        idle) — the text just stops implying work that isn't happening."""
+        btn = getattr(self, "_interrupt_btn", None)
+        if btn is None:
+            return
+        if self.hud.speaking:
+            btn.setText("■  INTERRUPT — SPEAKING")
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #200010; color: #ff6688;
+                    border: 1px solid #ff6688; border-radius: 3px;
+                }}
+                QPushButton:hover {{ background: #300018; }}
+            """)
+        else:
+            btn.setText("■  INTERRUPT — IDLE")
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #140008; color: {C.TEXT_DIM};
+                    border: 1px solid {C.BORDER}; border-radius: 3px;
+                }}
+                QPushButton:hover {{
+                    background: #200010; border-color: {C.MUTED_C};
+                    color: {C.MUTED_C};
+                }}
+            """)
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False
@@ -8400,6 +8461,12 @@ class JarvisUI:
         """Double-tap start: the engine's start_run, same fast-fail gates
         (validation/permissions/loop) as the model's run verb."""
         self._win._automation_runner = runner
+
+    def bind_automation_engine(self, engine) -> None:
+        """V3 Phase 7: the overlay header strip reads the engine's real
+        status_summary() through this seam — no second engine, no polling
+        loop of its own beyond the overlay's existing store timer."""
+        self._win._automation_engine = engine
 
     def wait_for_api_key(self):
         while not self._win._ready:
