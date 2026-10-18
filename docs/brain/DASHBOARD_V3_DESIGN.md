@@ -107,7 +107,7 @@ gated), automation poll 2.5 s (overlay), `_SysMetrics` thread 2 s.
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ A TOP BAR 54px: [AETHER-I · protocol] [STATE chip] [HEALTH cpu/mem] │
+│ A TOP BAR 54px: [XYRIS I · protocol] [STATE chip] [HEALTH cpu/mem] │
 │                 [notices●] [persona] [clock/date] [⚙]              │
 ├──────────┬────────────────────────────────────────┬────────────────┤
 │ B NAV    │ C LIVING NEURAL CORE                   │ D ACTIVITY     │
@@ -149,7 +149,7 @@ Settings → existing quick drawer. The nav highlight follows
 page-or-overlay honestly (overlay open ⇒ its item highlighted).
 
 **A Top bar:** reuses the existing 1 s clock/date timers and persona
-indicator; adds: AETHER-I wordmark (replaces "MARK LIV" badge/title),
+indicator; adds: XYRIS I wordmark (replaces "MARK LIV" badge/title),
 a **STATE chip** fed by the same `_apply_state` seam (label = real
 `app_state` text, glyph+colour from `HudCanvas._state_accent` vocabulary —
 color + text, never color-only), a **HEALTH strip** = CPU% and MEM% from
@@ -239,7 +239,7 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
 
 ## DoD checklist (spec §21 — verified in Phase 10)
 
-- [x] AETHER-I branding consistent — `APP_VERSION`/`APP_PROTOCOL` constants
+- [x] XYRIS I branding consistent — `APP_VERSION`/`APP_PROTOCOL` constants
       + sweep (phase 2); `TestV3Shell::test_branding_constants`.
 - [x] Existing neural core preserved — HudCanvas is page 0 untouched,
       `_auto_sig` band seam intact; `TestV3CoreIntegration`.
@@ -302,7 +302,7 @@ page + memory page · 6 provider card · 7 automation center enrichment ·
 - Phase 0–1 (b77b1a0): audit + this design.
 - Phase 2 (6bee183): shell — nav rail, center stack (page 0 = existing
   HudCanvas untouched, page 1 = System Monitor), top-bar state chip +
-  health strip, AETHER-I branding sweep, responsive collapse.
+  health strip, XYRIS I branding sweep, responsive collapse.
 - Phase 3–4: core verified in page 0 (chip ↔ HUD single
   sink via `_apply_state`, `_auto_sig` band seam intact); right rail now
   tabbed ACTIVITY (`_FeedPanel`, own-cursor `drain_since` on the shared

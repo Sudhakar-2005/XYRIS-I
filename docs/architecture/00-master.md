@@ -1,8 +1,8 @@
-# AETHER-I Intelligence Architecture V0.1
+# XYRIS I Intelligence Architecture V0.1
 
 **Status:** Specification Draft  
 **Date:** 2026-09-18  
-**Scope:** Complete intelligence architecture for AETHER-I evolution from voice assistant to native intelligence
+**Scope:** Complete intelligence architecture for XYRIS I evolution from voice assistant to native intelligence
 
 ---
 
@@ -20,7 +20,7 @@
 10. [Verification Engine](part-10-verification.md)
 11. [Error Recovery](part-11-error-recovery.md)
 12. [Controlled Learning](part-12-learning.md)
-13. [AETHER Foundation Model Strategy](part-13-foundation-model.md)
+13. [XYRIS Foundation Model Strategy](part-13-foundation-model.md)
 14. [Training Data Strategy](part-14-training-data.md)
 15. [Evaluation Benchmark](part-15-evaluation.md)
 16. [Runtime Infrastructure](part-16-runtime-infrastructure.md)
@@ -38,12 +38,12 @@
 UNDERSTAND → REASON → PLAN → ACT → OBSERVE → VERIFY → REMEMBER → IMPROVE
 ```
 
-AETHER-I evolves through stages:
+XYRIS I evolves through stages:
 
 ```
 VOICE ASSISTANT → AI ASSISTANT → AGENT → AUTONOMOUS COMPUTER AGENT
-→ MULTIMODAL PERSONAL INTELLIGENCE → AETHER-NATIVE INTELLIGENCE
-→ AETHER FOUNDATION MODEL
+→ MULTIMODAL PERSONAL INTELLIGENCE → XYRIS-NATIVE INTELLIGENCE
+→ XYRIS FOUNDATION MODEL
 ```
 
 Every architectural decision must advance toward this direction without

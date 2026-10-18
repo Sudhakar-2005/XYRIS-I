@@ -1,8 +1,8 @@
-# AETHER-I Persona Engine — Implementation Plan
+# XYRIS I Persona Engine — Implementation Plan
 
 ## Architecture Audit Summary
 
-**Project**: AETHER-I (Mark-LIV) — a PyQt6 voice assistant using Gemini Live API  
+**Project**: XYRIS I (formerly AETHER-I / MARK LIV) — a PyQt6 voice assistant using Gemini Live API  
 **Location**: `C:\Users\Toshiba\Downloads\Mark-LIV-main\Mark-LIV-main`  
 **Tests**: 460 passing  
 **Python**: 3.11.9 via D:\MarkLIV-venv

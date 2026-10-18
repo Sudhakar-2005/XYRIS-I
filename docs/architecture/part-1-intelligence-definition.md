@@ -1,8 +1,8 @@
 # Part 1 — Intelligence Definition
 
-## 1.1 What AETHER Intelligence Means
+## 1.1 What XYRIS Intelligence Means
 
-AETHER intelligence is the measurable ability to:
+XYRIS intelligence is the measurable ability to:
 
 1. **Understand** user intent from multimodal input
 2. **Reason** about the current situation using available context

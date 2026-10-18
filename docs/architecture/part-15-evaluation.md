@@ -1,6 +1,6 @@
 # Part 15 — Evaluation Benchmark
 
-## 15.1 AETHER Intelligence Benchmark (AIB)
+## 15.1 XYRIS Intelligence Benchmark (XIB)
 
 ### Language Understanding
 - Intent parsing accuracy: % of correctly parsed intents
@@ -41,10 +41,10 @@
 
 | Suite | Difficulty | Focus Area |
 |-------|-----------|------------|
-| AIB-Lite | Easy | Basic language, simple tasks |
-| AIB-Core | Medium | Planning, tool use, computer use |
-| AIB-Hard | Hard | Complex reasoning, error recovery |
-| AIB-Expert | Expert | Multi-step autonomous tasks |
+| XIB-Lite | Easy | Basic language, simple tasks |
+| XIB-Core | Medium | Planning, tool use, computer use |
+| XIB-Hard | Hard | Complex reasoning, error recovery |
+| XIB-Expert | Expert | Multi-step autonomous tasks |
 
 ## 15.3 Evaluation Protocol
 

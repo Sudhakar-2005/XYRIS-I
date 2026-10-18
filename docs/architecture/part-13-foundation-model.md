@@ -1,16 +1,16 @@
-# Part 13 — AETHER Foundation Model Strategy
+# Part 13 — XYRIS Foundation Model Strategy
 
 ## 13.1 Staged Evolution
 
 ### Stage 0: External Model + Runtime (CURRENT)
-- Objective: Use Gemini Live API as the brain, AETHER runtime handles everything else
+- Objective: Use Gemini Live API as the brain, XYRIS runtime handles everything else
 - Model size: N/A (external)
 - Training: None
 - Compute: API calls only
 - Risk: Low (model is replaceable)
 - Exit criteria: Runtime architecture is stable and complete
 
-### Stage 1: AETHER Prompting
+### Stage 1: XYRIS Prompting
 - Objective: Optimize prompts for structured output, tool use, reasoning
 - Model size: N/A (external)
 - Training: Prompt engineering only
@@ -21,18 +21,18 @@
 ### Stage 2: Small Model Experiments
 - Objective: Train small (1-3B) models for specific sub-tasks
 - Model size: 1-3B parameters
-- Training: Instruction tuning on AETHER-specific data
+- Training: Instruction tuning on XYRIS-specific data
 - Compute: Single GPU (feasible now)
 - Risk: Medium
-- Exit criteria: Small model outperforms general model on specific AETHER tasks
+- Exit criteria: Small model outperforms general model on specific XYRIS tasks
 
 ### Stage 3: Instruction Tuning
-- Objective: Fine-tune a base model on AETHER instruction data
+- Objective: Fine-tune a base model on XYRIS instruction data
 - Model size: 3-7B parameters
 - Training: LoRA/QLoRA on curated dataset
 - Compute: Single GPU, 1-2 days (feasible now)
 - Risk: Medium
-- Exit criteria: Measurable improvement on AETHER benchmark
+- Exit criteria: Measurable improvement on XYRIS benchmark
 
 ### Stage 4: Tool-Use Training
 - Objective: Train model to reliably select and invoke tools
@@ -64,14 +64,14 @@
 - Training: Multimodal trajectory data
 - Compute: Multi-node, 2+ weeks (research scale)
 - Risk: Very high
-- Exit criteria: Competitive with frontier models on AETHER-specific tasks
+- Exit criteria: Competitive with frontier models on XYRIS-specific tasks
 
-### Stage 8: AETHER Foundation Model
+### Stage 8: XYRIS Foundation Model
 - Objective: Full native intelligence
 - Model size: 30B+ parameters
 - Compute: Cluster scale (frontier scale)
 - Risk: Very high
-- Exit criteria: AETHER can operate without external model dependency
+- Exit criteria: XYRIS can operate without external model dependency
 
 ## 13.2 Feasibility Assessment
 

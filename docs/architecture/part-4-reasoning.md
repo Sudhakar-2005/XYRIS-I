@@ -13,7 +13,7 @@
 
 ## 4.2 Reasoning Artifacts
 
-AETHER never exposes raw chain-of-thought. Instead, structured artifacts:
+XYRIS never exposes raw chain-of-thought. Instead, structured artifacts:
 
 ```
 REASONING ARTIFACT
@@ -51,7 +51,7 @@ DEEP REASONING:
 
 ## 4.4 Self-Checking
 
-After every reasoning step, AETHER must:
+After every reasoning step, XYRIS must:
 1. Check conclusion against known facts
 2. Check for internal contradictions
 3. Assess confidence honestly

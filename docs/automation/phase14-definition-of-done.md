@@ -1,4 +1,4 @@
-# AETHER-I Automation Intelligence V0.1 — Phase 14 Definition of Done
+# XYRIS I Automation Intelligence V0.1 — Phase 14 Definition of Done
 
 Final gate, verified 2026-10-03. Interpreter: `D:\MarkLIV-venv\Scripts\python.exe`, `QT_QPA_PLATFORM=offscreen`.
 

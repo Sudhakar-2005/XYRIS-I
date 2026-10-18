@@ -2,7 +2,7 @@
 
 ## 12.1 Learning Definition
 
-Learning for AETHER means improving task completion performance over time
+Learning for XYRIS means improving task completion performance over time
 through controlled analysis of trajectories, outcomes, and user feedback.
 
 Learning does NOT mean uncontrolled self-modification.

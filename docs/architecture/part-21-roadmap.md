@@ -56,12 +56,12 @@
 ## 21.3 Phase 3: Training (Months 6-12)
 
 ### Month 6-9: Base Training
-- Fine-tune base model on AETHER data
+- Fine-tune base model on XYRIS data
 - LoRA/QLoRA for efficiency
 - Single GPU training
 
 ### Month 10-12: Evaluation
-- Run AETHER Intelligence Benchmark
+- Run XYRIS Intelligence Benchmark
 - A/B test against Gemini
 - Iterate on data and hyperparameters
 
@@ -82,7 +82,7 @@
 - Measure reasoning quality improvement
 - Keep Gemini as fallback
 
-## 21.5 Phase 5: Full AETHER (Months 18-24)
+## 21.5 Phase 5: Full XYRIS (Months 18-24)
 
 ### Month 18-20: Local Inference
 - Optimize model for local inference
@@ -101,6 +101,6 @@
 |-------|---------------|
 | Phase 1 | All runtime components working, 100% backward compatible |
 | Phase 2 | 100K+ training examples collected |
-| Phase 3 | Fine-tuned model outperforms Gemini on AIB-Lite |
+| Phase 3 | Fine-tuned model outperforms Gemini on XIB-Lite |
 | Phase 4 | Fine-tuned model handles 50%+ of tasks without Gemini |
 | Phase 5 | Fine-tuned model handles 90%+ of tasks locally |

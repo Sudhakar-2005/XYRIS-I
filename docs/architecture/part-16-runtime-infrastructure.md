@@ -3,7 +3,7 @@
 ## 16.1 Runtime Components
 
 ```
-AETHER RUNTIME (Python 3.11)
+XYRIS RUNTIME (Python 3.11)
   |
 EVENT BUS
   - Async message queue

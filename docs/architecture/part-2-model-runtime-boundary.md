@@ -6,25 +6,25 @@
 USER INTERFACE
   Voice / Text / Screen / Camera / Dashboard
         |
-AETHER FOUNDATION MODEL
+XYRIS FOUNDATION MODEL
   Language / Reasoning / Planning / Code / Tool Selection / Multimodal
-  [Future: AETHER-native]  [Current: Gemini Live API]
+  [Future: XYRIS-native]  [Current: Gemini Live API]
         |
-AETHER COGNITIVE LAYER
+XYRIS COGNITIVE LAYER
   Intent Parser / Context Manager / Reasoning Structurer
   Planner / Verifier / Identity Manager
   [Deterministic + hybrid]  [Python, calls model]
         |
-AETHER AGENT RUNTIME
+XYRIS AGENT RUNTIME
   Executor / Tool Registry / Security Manager
   Undo Stack / Event Bus / Transaction Log
   Confirmation Gate / Rate Limiter
   [100% deterministic]  [Never delegated to model]
         |
-AETHER TOOLS
+XYRIS TOOLS
   Actions / Plugins / OS Interface / Browser / Files / Network
         |
-AETHER OS INTERFACE
+XYRIS OS INTERFACE
   Windows API / File System / Process / Audio / Display / Network
 ```
 

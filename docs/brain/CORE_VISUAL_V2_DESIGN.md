@@ -1,4 +1,4 @@
-# AETHER-I Living Neural Core V2 — Audit & Design (Phases 0–1)
+# XYRIS I Living Neural Core V2 — Audit & Design (Phases 0–1)
 
 Supersedes nothing: `CORE_VISUAL_DESIGN.md` (V1) stays the record of what was
 built first. This document is the V2 spec (premium reactor + real-time
@@ -198,7 +198,7 @@ motion, pointer-parallax gating, paint-timer smoke, plus full regression run
 - [x] Reduced-motion mode works — rates ×0.12, particles drained, drift
       frozen, parallax pinned, signals off, static band/ring windows
       (tested each)
-- [x] Renderer failure does not crash AETHER-I — fail-soft boundary +
+- [x] Renderer failure does not crash XYRIS I — fail-soft boundary +
       sticky simple-orb fallback, one logged error, tested with a synthetic
       paint exception (`test_paint_failure_falls_back_and_sticks`)
 - [x] Performance has been measured — `tools/hud_paint_bench.py` numbers

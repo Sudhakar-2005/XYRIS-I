@@ -1,4 +1,4 @@
 @echo off
-title MARK LIV
+title XYRIS I
 "D:\MarkLIV-venv\Scripts\python.exe" main.py
 pause

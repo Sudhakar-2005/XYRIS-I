@@ -1,4 +1,4 @@
-# AETHER-I Living Neural Core — Design & State Mapping (Phase 1)
+# XYRIS I Living Neural Core — Design & State Mapping (Phase 1)
 
 ## Stack decision (Phase 0 audit)
 

@@ -1,4 +1,4 @@
-# AETHER-I Brain V0.1 — Phase 0: Repository Audit
+# XYRIS I Brain V0.1 — Phase 0: Repository Audit
 
 **Scope:** `C:\Users\Toshiba\Downloads\Mark-LIV-main` at commit `db7689c`.
 **Method:** code-only verification (grep/read across `main.py`, `ui.py`, `core/`, `actions/`, `plugins/`, `memory/`, `dashboard/`, `config/`). Documentation and roadmaps were never trusted as evidence.

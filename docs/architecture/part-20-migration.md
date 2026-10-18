@@ -2,7 +2,7 @@
 
 ## 20.1 Migration Strategy
 
-The migration from V2 (Gemini Live API) to AETHER Foundation Model
+The migration from V2 (Gemini Live API) to XYRIS Foundation Model
 must be gradual, non-breaking, and reversible at every stage.
 
 ## 20.2 Migration Phases
@@ -23,9 +23,9 @@ must be gradual, non-breaking, and reversible at every stage.
 - Start small model experiments (1-3B)
 
 ### Phase 3: Training (Months 6-12)
-- Fine-tune base model on AETHER data
+- Fine-tune base model on XYRIS data
 - A/B test: Gemini vs fine-tuned model
-- Measure on AETHER Intelligence Benchmark
+- Measure on XYRIS Intelligence Benchmark
 - Iterate on training data and hyperparameters
 
 ### Phase 4: Gradual Replacement (Months 12-18)
@@ -35,7 +35,7 @@ must be gradual, non-breaking, and reversible at every stage.
 - Then full reasoning (hardest)
 - Keep Gemini as fallback at every stage
 
-### Phase 5: Full AETHER (Months 18-24)
+### Phase 5: Full XYRIS (Months 18-24)
 - Fine-tuned model handles all reasoning
 - Gemini available as fallback only
 - Full local capability

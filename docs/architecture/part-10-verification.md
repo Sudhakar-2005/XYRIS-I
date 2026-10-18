@@ -2,7 +2,7 @@
 
 ## 10.1 Verification Principle
 
-AETHER must NEVER claim success merely because an action was issued.
+XYRIS must NEVER claim success merely because an action was issued.
 Verification is a first-class intelligence capability.
 
 ## 10.2 Verification Loop

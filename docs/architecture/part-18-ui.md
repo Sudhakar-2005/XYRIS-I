@@ -38,7 +38,7 @@ STATUS BAR
 ## 18.2 Voice Interface
 
 - Push-to-Talk: Ctrl+Alt+J (configurable)
-- Wake word detection: "Hey AETHER" (future)
+- Wake word detection: "Hey XYRIS" (future)
 - Barge-in: Interrupt model with voice
 - TTS voice selection: Persona-mapped
 - Voice activity detection (VAD)
