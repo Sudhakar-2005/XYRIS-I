@@ -5386,6 +5386,8 @@ class MainWindow(QMainWindow):
         # gesture control is off by default.
         self._gesture_cursor = None
         self._gesture_engine = None  # Set by main.py after JarvisLive init
+        self._last_gesture_intent = None       # last raw intent seen (Stage 1)
+        self._gesture_no_target_logged = set()  # dedupe honest no-target logs (R4)
 
         sc_mute = QShortcut(QKeySequence("F4"), self)
         sc_mute.activated.connect(self._toggle_mute)
@@ -5405,33 +5407,63 @@ class MainWindow(QMainWindow):
         return self._gesture_cursor
 
     def _on_gesture_event(self, name: str, data) -> None:
-        """Slot — handle gesture events from the spatial engine."""
+        """Slot - handle gesture events from the spatial engine."""
         cursor = self._ensure_gesture_cursor()
         if name == "pointer_move" and isinstance(data, tuple):
             cursor.show()
             cursor.move_to(data[0], data[1])
-        elif name == "state_change":
-            state_map = {
-                "TRACKING": "pointer",
-                "HOVERING": "hover",
-                "PINCH_DETECTED": "select",
-                "SELECTING": "select",
-                "DRAGGING": "drag",
-                "PAUSED": "paused",
-                "CAMERA_ERROR": "error",
-                "INACTIVE": "hidden",
-            }
-            cursor_state = state_map.get(str(data), "hidden")
-            cursor.set_state(cursor_state)
-            if cursor_state == "hidden":
-                cursor.hide()
+        elif name == "intent":
+            self._last_gesture_intent = str(data)
+        elif name == "dispatch":
+            self._handle_gesture_dispatch(data)
 
     def _on_gesture_state(self, state: str) -> None:
-        """Slot — gesture engine state changed."""
-        pass  # Could update status bar or indicator
+        """Slot - gesture engine state changed -> cursor styling.
+
+        Single emitter: main.py emits _gesture_state_sig per gesture event.
+        The former "state_change" branch of _on_gesture_event had no emitter
+        anywhere in the app (dead code, Phase 2 §1.7) - its state map lives here now.
+        """
+        cursor = self._ensure_gesture_cursor()
+        state_map = {
+            "TRACKING": "pointer",
+            "HOVERING": "hover",
+            "PINCH_DETECTED": "select",
+            "SELECTING": "select",
+            "DRAGGING": "drag",
+            "PAUSED": "paused",
+            "CAMERA_ERROR": "error",
+            "INACTIVE": "hidden",
+        }
+        cursor_state = state_map.get(str(state), "hidden")
+        cursor.set_state(cursor_state)
+        if cursor_state == "hidden":
+            cursor.hide()
+
+    def _handle_gesture_dispatch(self, data) -> None:
+        """Honest dispatch feedback: report the outcome, or say so plainly (R4).
+
+        Deduped per intent so a held pinch cannot flood the log; the dedupe
+        resets on every gesture toggle so a retry always speaks once.
+        """
+        try:
+            if not (isinstance(data, (tuple, list)) and len(data) == 2):
+                return  # only our own emitter's (intent, target) payloads are accepted
+            intent, target = data
+            intent = str(intent)
+        except Exception:
+            return
+        if target:
+            self._gesture_no_target_logged.discard(intent)
+            self._log.append_log(f"GESTURE {intent} -> {target}")
+            return
+        if intent not in self._gesture_no_target_logged:
+            self._gesture_no_target_logged.add(intent)
+            self._log.append_log(f"GESTURE {intent}: no gesture target")
 
     def toggle_gesture_control(self) -> None:
         """Toggle gesture control on/off."""
+        self._gesture_no_target_logged.clear()  # a fresh session always speaks once (R4)
         if self._gesture_engine is None and self.on_gesture_engine_needed:
             self.on_gesture_engine_needed()   # first use builds the engine (lazy)
         if self._gesture_engine is None:
@@ -5446,7 +5478,16 @@ class MainWindow(QMainWindow):
             if self._gesture_engine.start():
                 self._log.append_log("Gesture control ON — show your hand")
             else:
-                self._log.append_log("Gesture control unavailable — camera error")
+                # Only claim what cv2 actually told us (R4): a generic open
+                # failure is "missing or in use" - Windows cv2 cannot say which.
+                detail = ""
+                cam = getattr(self._gesture_engine, "camera", None)
+                err = getattr(cam, "last_error", None)
+                if err == "not_opened":
+                    detail = " (camera could not be opened — missing or in use)"
+                elif err:
+                    detail = f" ({err})"
+                self._log.append_log(f"Gesture control unavailable — camera error{detail}")
 
     # --- Tray integration ----------------------------------------------------
     def closeEvent(self, event):

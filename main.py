@@ -958,9 +958,21 @@ class JarvisLive:
                 confidence_threshold=_gcfg.get("gesture_confidence_threshold", 0.7),
                 pointer_smoothing=_gcfg.get("gesture_smoothing", 0.3),
                 mirror_mode=_gcfg.get("gesture_mirror_mode", True),
+                # Stage 4 hardening (defaults = legacy; config-only opt-in)
+                pinch_normalized=bool(_gcfg.get("gesture_pinch_normalized", False)),
+                pose_earn_frames=int(_gcfg.get("gesture_pose_earn_frames", 0)),
+                two_hand_min_separation=float(_gcfg.get("gesture_two_hand_min_separation", 0.0)),
+                two_hand_grace_frames=int(_gcfg.get("gesture_two_hand_grace_frames", 1)),
+                smoothing_filter=str(_gcfg.get("gesture_smoothing_filter", "ema")),
+                # Stage 5 vocabulary (defaults = legacy; config-only opt-in)
+                tap_action=bool(_gcfg.get("gesture_tap_action", False)),
+                flick_detect=bool(_gcfg.get("gesture_flick_detect", False)),
+                peace_reset=bool(_gcfg.get("gesture_peace_reset", False)),
             )
             self._gesture_engine = SpatialInteractionEngine(_gs_obj)
             self._gesture_engine.on_gesture_event = self._on_gesture_event
+            self._gesture_engine.on_gesture_dispatch = self._on_gesture_dispatch
+            self._gesture_engine.on_state_change = self._on_gesture_state_change
             self.ui.set_gesture_engine(self._gesture_engine)
         return self._gesture_engine
 
@@ -994,6 +1006,20 @@ class JarvisLive:
             self.ui.emit_gesture_state(str(self._gesture_engine.state.name) if self._gesture_engine else "INACTIVE")
         except Exception as e:
             print(f"[Spatial] Gesture event error: {e}")
+
+    def _on_gesture_dispatch(self, intent: str, target) -> None:
+        """Forward gesture dispatch outcomes to the UI (honest no-target logging)."""
+        try:
+            self.ui.emit_gesture_event("dispatch", (intent, target))
+        except Exception as e:
+            print(f"[Spatial] Gesture dispatch error: {e}")
+
+    def _on_gesture_state_change(self, old, new) -> None:
+        """Surface real state transitions (LOST_HAND, CAMERA_ERROR, …) to the UI."""
+        try:
+            self.ui.emit_gesture_state(str(new.name))
+        except Exception as e:
+            print(f"[Spatial] Gesture state error: {e}")
 
     def _on_wake_detected(self) -> None:
         """Called from the detector thread when 'Hey Jarvis' is heard."""

@@ -41,6 +41,10 @@ class SpatialInteractionEngine:
         engine.stop()
     """
 
+    # Intents whose dispatch outcome is reported to the UI (Stage 1: SELECT;
+    # Stage 5 extends with DISMISS/RESET per XYRIS_GESTURE_ARCHITECTURE.md §4.2).
+    _DISPATCH_INTENTS = {GestureIntent.SELECT}
+
     def __init__(self, settings: Optional[GestureSettings] = None):
         self._settings = settings or GestureSettings()
 
@@ -49,6 +53,7 @@ class SpatialInteractionEngine:
         self._tracker = HandTracker(max_hands=2)
         self._recognizer = GestureRecognizer(self._settings)
         self._state_machine = InteractionStateMachine()
+        self._state_machine.on_transition = self._forward_state_change
         self._interpreter = GestureInterpreter(self._state_machine, self._settings)
         self._ui_controller = UIInteractionController()
         self._safety = SafetyController()
@@ -66,6 +71,7 @@ class SpatialInteractionEngine:
         self._on_gesture_event: Optional[Callable[[GestureEvent], None]] = None
         self._on_state_change: Optional[Callable[[InteractionState, InteractionState], None]] = None
         self._on_pointer_move: Optional[Callable[[tuple[float, float]], None]] = None
+        self._on_gesture_dispatch: Optional[Callable[[str, Optional[str]], None]] = None
 
         # Debug
         self._debug_mode = False
@@ -133,6 +139,26 @@ class SpatialInteractionEngine:
     @on_pointer_move.setter
     def on_pointer_move(self, callback: Callable[[tuple[float, float]], None]):
         self._on_pointer_move = callback
+
+    @property
+    def on_gesture_dispatch(self):
+        return self._on_gesture_dispatch
+
+    @on_gesture_dispatch.setter
+    def on_gesture_dispatch(self, callback: Callable[[str, Optional[str]], None]):
+        self._on_gesture_dispatch = callback
+
+    def _forward_state_change(
+        self, old: InteractionState, new: InteractionState
+    ) -> None:
+        """Bridge state-machine transitions to the user-assigned callback (Stage 2)."""
+        cb = self._on_state_change
+        if cb is None:
+            return
+        try:
+            cb(old, new)
+        except Exception as e:
+            logger.error("State change callback error: %s", e)
 
     def start(self) -> bool:
         """Start the gesture engine."""
@@ -205,6 +231,21 @@ class SpatialInteractionEngine:
         """Unregister a UI element."""
         self._ui_controller.unregister_target(target_id)
 
+    def _dispatch_actionable(self, event: GestureEvent, target_id: Optional[str] = None) -> None:
+        """Report actionable dispatch outcomes so the UI can stay honest (Stage 1).
+
+        `target_id` is what ui_controller.process_event returned: None means no
+        registered target handled the intent, which the UI surfaces as an
+        explicit "no gesture target" log rather than silence (SECURITY_AND_PRIVACY.md R4).
+        """
+        cb = self._on_gesture_dispatch
+        if cb is None or event.intent not in self._DISPATCH_INTENTS:
+            return
+        try:
+            cb(str(event.intent.value), target_id)
+        except Exception as e:
+            logger.error("Gesture dispatch callback error: %s", e)
+
     def _on_camera_frame(self, frame: np.ndarray, timestamp: float) -> None:
         """Callback for each new camera frame."""
         with self._frame_lock:
@@ -247,6 +288,7 @@ class SpatialInteractionEngine:
 
                 # Process through UI controller
                 target_id = self._ui_controller.process_event(interpreted)
+                self._dispatch_actionable(interpreted, target_id)
 
                 # Emit callbacks
                 if self._on_gesture_event:

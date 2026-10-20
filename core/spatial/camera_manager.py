@@ -37,6 +37,15 @@ class CameraManager:
         self._fps_start: float = 0.0
         self._width: int = 0
         self._height: int = 0
+        # Stage 2 (status honesty): why the last start() failed, in the only
+        # vocabulary cv2 actually provides - "not_opened" or an exception text.
+        # Never inferred beyond this: SECURITY_AND_PRIVACY.md R4.
+        self._last_error: Optional[str] = None
+
+    @property
+    def last_error(self) -> Optional[str]:
+        """Reason the most recent start() failed ('not_opened' / 'exception: …') / None."""
+        return self._last_error
 
     @property
     def is_running(self) -> bool:
@@ -72,6 +81,7 @@ class CameraManager:
             self._cap = cv2.VideoCapture(self._camera_index)
             if not self._cap.isOpened():
                 logger.error("Failed to open camera %d", self._camera_index)
+                self._last_error = "not_opened"
                 return False
 
             self._width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -91,10 +101,12 @@ class CameraManager:
                 name="camera-manager",
             )
             self._thread.start()
+            self._last_error = None
             return True
 
         except Exception as e:
             logger.error("Camera start error: %s", e)
+            self._last_error = f"exception: {e}"
             return False
 
     def stop(self) -> None:

@@ -429,6 +429,18 @@ DEFAULT_GESTURE_CFG = {
     "gesture_confidence_threshold": 0.7,
     "gesture_smoothing": 0.3,
     "gesture_mirror_mode": True,
+    # Stage 4 hardening switches — every default is legacy behavior; only a
+    # user config edit (gitignored) can turn a gate on (roadmap Stage 7).
+    "gesture_pinch_normalized": False,
+    "gesture_pose_earn_frames": 0,
+    "gesture_two_hand_min_separation": 0.0,
+    "gesture_two_hand_grace_frames": 1,
+    "gesture_smoothing_filter": "ema",
+    # Stage 5 vocabulary switches — same opt-in rule as Stage 4: defaults are
+    # legacy behavior; only a user config edit (gitignored) turns them on.
+    "gesture_tap_action": False,
+    "gesture_flick_detect": False,
+    "gesture_peace_reset": False,
 }
 
 
