@@ -94,6 +94,29 @@ def set_trim_notifier(fn) -> None:
     _trim_notifier = fn
 
 
+# Set by main.py so store/retrieve can join the event bus from whatever
+# thread called us (the Living Memory Brain's sync channel — the activity
+# ring + dashboard see memory traffic live). Observability only: same
+# never-raise contract as the trim notifier; unbound = silent no-op.
+_memory_event_hook = None
+
+
+def set_memory_event_hook(fn) -> None:
+    """Register callable(event_type, data) fired after a store or a recall.
+    event_type is "memory_stored" | "memory_retrieved"; data carries only
+    non-value metadata (key/category/hits) — memory contents never leave."""
+    global _memory_event_hook
+    _memory_event_hook = fn
+
+
+def _fire_memory_event(event_type: str, data: dict) -> None:
+    if _memory_event_hook:
+        try:
+            _memory_event_hook(event_type, data)
+        except Exception:
+            pass
+
+
 def _trim_to_limit(memory: dict) -> dict:
     if len(json.dumps(memory, ensure_ascii=False)) <= MEMORY_MAX_CHARS:
         return memory
@@ -381,6 +404,7 @@ def search_memory(query: str, limit: int = 8) -> str:
                 rows.append((s, cat, key, val))
 
     if not rows:
+        _fire_memory_event("memory_retrieved", {"hits": 0})
         return (f"Nothing stored about '{query}'." if query
                 else "I have not stored anything about this person yet.")
 
@@ -390,6 +414,7 @@ def search_memory(query: str, limit: int = 8) -> str:
              else "Everything currently stored:")
     more  = (f"\n(+{len(rows) - len(lines)} more — search with a narrower keyword)"
              if len(rows) > len(lines) else "")
+    _fire_memory_event("memory_retrieved", {"hits": len(rows)})
     return head + "\n" + "\n".join(lines) + more
 
 
@@ -434,6 +459,7 @@ def remember(key: str, value: str, category: str = "notes") -> str:
     if category not in valid:
         category = "notes"
     update_memory({category: {key: {"value": value}}})
+    _fire_memory_event("memory_stored", {"key": key, "category": category})
     return f"Remembered: {category}/{key} = {value}"
 
 

@@ -6399,7 +6399,9 @@ class MainWindow(QMainWindow):
         """V3 page 2 — MEMORY: real get_memory_stats() counts (design matrix
         §G: counts only; the entry inspector is the existing MemoryOverlay,
         opened from this page). No entries are loaded here — that surface
-        already exists and must not be duplicated."""
+        already exists and must not be duplicated. The universe button hands
+        off to the loopback read-only board (memory_holo), not another Qt
+        surface."""
         w = QWidget()
         w.setStyleSheet(f"background: {C.BG};")
         lay = QVBoxLayout(w)
@@ -6442,6 +6444,18 @@ class MainWindow(QMainWindow):
         """)
         inspect.clicked.connect(self._open_memory_panel)
         btns.addWidget(inspect)
+
+        universe = QPushButton("OPEN MEMORY UNIVERSE")
+        universe.setFixedHeight(28)
+        universe.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        universe.setCursor(Qt.CursorShape.PointingHandCursor)
+        universe.setStyleSheet(f"""
+            QPushButton {{ background: transparent; color: {C.PRI};
+                border: 1px solid {C.PRI_DIM}; border-radius: 3px; }}
+            QPushButton:hover {{ background: {C.PRI_GHO}; border-color: {C.PRI}; }}
+        """)
+        universe.clicked.connect(self._open_memory_universe)
+        btns.addWidget(universe)
 
         refresh = QPushButton("REFRESH")
         refresh.setFixedHeight(28)
@@ -8006,6 +8020,23 @@ class MainWindow(QMainWindow):
         ov = MemoryOverlay(parent=self.centralWidget())
         self._centre_overlay(ov)
         self._memory_overlay = ov
+
+    def _open_memory_universe(self):
+        # Living Memory Brain: the interactive read-only board over this
+        # same store, in the system browser (loopback stdlib server, started
+        # on demand). Failure is reported, never raised — same fail-soft
+        # contract as every other optional local surface.
+        url, err = None, None
+        try:
+            from memory_holo import server as mem_view
+            url = mem_view.open_in_browser()
+        except Exception as e:
+            err = e
+        if url:
+            self.write_log(f"[Memory] Universe view opened: {url}")
+        else:
+            self.write_log(f"[Memory] Universe view unavailable: "
+                           f"{err or 'local server did not start'}")
 
     def _open_history_panel(self):
         ov = SessionHistoryOverlay(parent=self.centralWidget())

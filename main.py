@@ -973,6 +973,10 @@ class JarvisLive:
             self._gesture_engine.on_gesture_event = self._on_gesture_event
             self._gesture_engine.on_gesture_dispatch = self._on_gesture_dispatch
             self._gesture_engine.on_state_change = self._on_gesture_state_change
+            # Phase 4 (Living Memory Brain): the engine is the ONE camera
+            # owner — its landmark stream also feeds the loopback memory
+            # board's hand state machine (ingestHands shape).
+            self._gesture_engine.on_hands_update = self._on_engine_hands
             self.ui.set_gesture_engine(self._gesture_engine)
         return self._gesture_engine
 
@@ -1020,6 +1024,28 @@ class JarvisLive:
             self.ui.emit_gesture_state(str(new.name))
         except Exception as e:
             print(f"[Spatial] Gesture state error: {e}")
+
+    def _on_engine_hands(self, hands, frame_shape) -> None:
+        """Engine tick → the loopback memory board's /api/hands (Phase 4).
+
+        Runs on the engine's processing thread; conversion is O(2×21) and
+        fail-soft both ways — the view going away never stalls tracking, a
+        tracking hiccup never breaks the view (it just drops, honestly)."""
+        try:
+            from memory_holo import server as mem_view
+        except Exception:
+            return
+        try:
+            h, w = (tuple(frame_shape) + (0, 0))[:2]
+            payload = {"hands": [], "vw": int(w), "vh": int(h)}
+            for hand in (hands or [])[:2]:
+                pts = [{"x": float(xy[0]), "y": float(xy[1])}
+                       for xy in (getattr(hand, "landmarks", None) or [])[:21]]
+                if len(pts) == 21:
+                    payload["hands"].append(pts)
+            mem_view.publish_hands(payload)
+        except Exception as e:
+            print(f"[MemoryView] hands bridge error: {e}")
 
     def _on_wake_detected(self) -> None:
         """Called from the detector thread when 'Hey Jarvis' is heard."""
@@ -3159,6 +3185,18 @@ class JarvisLive:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
+        # Living Memory Brain (docs/living-memory-brain): the loopback
+        # read-only board over this same memory store — optional and
+        # fail-soft exactly like the dashboard, with its board events bound
+        # to the activity feed so what happens there shows up here.
+        try:
+            from memory_holo import server as _mem_view
+            _mem_view.set_activity_feed(self._activity)
+            self._memory_view = _mem_view.start()
+        except Exception as e:
+            print(f"[MemoryView] Disabled: {e}")
+            self._memory_view = None
+
         # M11: the event bus, finally wired (§3.15) — started before any
         # emission point so early events queue instead of dropping, with one
         # bridge subscriber feeding the dashboard stream. The print() shim
@@ -3174,6 +3212,33 @@ class JarvisLive:
                 _bind_activity(self._activity)
             except Exception:
                 pass
+        # Living Memory Brain Phase 3: memory store/recall join the bus so
+        # the activity ring + dashboard see them (MEMORY_STORED / _RETRIEVED,
+        # defined since Phase 1 but silent until now). The store runs on
+        # worker threads, so each event hops onto the loop thread; the hook
+        # itself never raises — an observer must not break the store.
+        try:
+            from memory.memory_manager import set_memory_event_hook
+
+            def _memory_event(kind: str, data: dict) -> None:
+                try:
+                    bus = getattr(self, "_event_bus", None)
+                    lp = getattr(self, "_loop", None)
+                    if bus is None or lp is None or not bus.stats.get("running"):
+                        return
+                    payload = dict(data or {})
+                    payload["kind"] = kind    # summarize() renders it cleanly
+                    et = (EventType.MEMORY_STORED if kind == "memory_stored"
+                          else EventType.MEMORY_RETRIEVED)
+                    evt = Event(priority=Priority.NORMAL, event_type=et,
+                                source="memory", data=payload)
+                    asyncio.run_coroutine_threadsafe(bus.publish(evt), lp)
+                except Exception:
+                    pass
+
+            set_memory_event_hook(_memory_event)
+        except Exception:
+            pass
         # Phase 10: the automations panel reads the engine's store directly.
         _bind_auto = getattr(_ui, "bind_automation_store", None)
         if callable(_bind_auto):

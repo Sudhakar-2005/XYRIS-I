@@ -9,6 +9,8 @@ Auto-discovered tool providing verbal memory commands:
   - Export / import memories (backup and restore)
   - Clear memories (by category or all)
   - Memory age ("When did I tell you about my project?")
+  - Open the interactive view ("Open my memory universe" — the read-only
+    board in the system browser, memory_holo on loopback)
 """
 from memory.memory_manager import (
     remember, forget, forget_matching, search_memory, is_sensitive_key_value,
@@ -103,10 +105,22 @@ def memory_controller(
             return "Please provide a key to check the age of."
         return get_memory_age(key, category)
 
+    elif action == "view":
+        # Read-only board over this same store, in the system browser.
+        # Fail-soft: the port may be busy or the module missing — say so.
+        from memory_holo import server as mem_view
+        try:
+            url = mem_view.open_in_browser()
+        except Exception:
+            url = None
+        if not url:
+            return "The memory universe view could not start (its local port may be busy)."
+        return f"Opened the read-only memory universe view: {url}"
+
     else:
         return (
             f"Unknown memory action: '{action}'. "
-            "Supported actions: remember | recall | forget | stats | export | import | clear | age"
+            "Supported actions: remember | recall | forget | stats | export | import | clear | age | view"
         )
 
 
@@ -127,14 +141,15 @@ TOOL = {
         "Use action='export' to backup all memories as JSON. "
         "Use action='import' to restore memories from a JSON backup. "
         "Use action='clear' to delete entries by category or all. "
-        "Use action='age' to check when a fact was last updated."
+        "Use action='age' to check when a fact was last updated. "
+        "Use action='view' to open the interactive read-only memory universe in the browser."
     ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "remember | recall | forget | stats | export | import | clear | age"
+                "description": "remember | recall | forget | stats | export | import | clear | age | view"
             },
             "key": {
                 "type": "STRING",

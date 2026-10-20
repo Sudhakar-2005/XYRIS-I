@@ -72,6 +72,12 @@ class SpatialInteractionEngine:
         self._on_state_change: Optional[Callable[[InteractionState, InteractionState], None]] = None
         self._on_pointer_move: Optional[Callable[[tuple[float, float]], None]] = None
         self._on_gesture_dispatch: Optional[Callable[[str, Optional[str]], None]] = None
+        # Phase 4 (Living Memory Brain): raw landmark frames, one call per
+        # processed frame — consumers = external viewers (the loopback memory
+        # board), never a second camera owner. Observers see the same
+        # HandLandmarks list the recognizer just got; (h, w, ...) frame shape
+        # lets them normalize. A slow/absent observer changes nothing here.
+        self._on_hands_update: Optional[Callable[[list, tuple], None]] = None
 
         # Debug
         self._debug_mode = False
@@ -147,6 +153,27 @@ class SpatialInteractionEngine:
     @on_gesture_dispatch.setter
     def on_gesture_dispatch(self, callback: Callable[[str, Optional[str]], None]):
         self._on_gesture_dispatch = callback
+
+    @property
+    def on_hands_update(self):
+        return self._on_hands_update
+
+    @on_hands_update.setter
+    def on_hands_update(self, callback: Callable[[list, tuple], None]):
+        self._on_hands_update = callback
+
+    def _emit_hands(self, hands: list, frame_shape: tuple) -> None:
+        """Fan the raw landmark frame out to the hands observer (Phase 4).
+
+        Called from the processing thread every tick. Never raises — an
+        observer must not be able to stall tracking."""
+        cb = self._on_hands_update
+        if cb is None:
+            return
+        try:
+            cb(hands, frame_shape)
+        except Exception as e:
+            logger.error("Hands update callback error: %s", e)
 
     def _forward_state_change(
         self, old: InteractionState, new: InteractionState
@@ -268,6 +295,7 @@ class SpatialInteractionEngine:
 
                 # Detect hands
                 hands = self._tracker.detect(frame)
+                self._emit_hands(hands, frame.shape)
 
                 # Recognize gesture
                 now = time.time()
